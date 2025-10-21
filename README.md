@@ -1,61 +1,192 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# LiveStock Pro Backend
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A comprehensive livestock management system backend built with Laravel 11. This API provides robust functionality for managing poultry farms, flocks, health records, and inventory tracking.
 
-## About Laravel
+## 🌟 Features
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+### 🐔 Poultry Management
+- **Flock Management**: Create, manage, and track poultry flocks
+- **Daily Records**: Monitor daily activities, health, and production metrics
+- **Batch Scheduling**: Plan and schedule feeding and care activities
+- **Stage Tracking**: Monitor flock growth stages and transitions
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+### 💊 Health & Medication Management
+- **Medication Records**: Complete CRUD operations for medication administration
+- **Vaccination Records**: Comprehensive vaccination tracking and management
+- **Inventory Integration**: Automatic stock reduction and restoration
+- **Administration Methods**: Track various medication delivery methods
+- **Cost Calculations**: Automatic cost computation based on dosage and inventory
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+### 🔐 Permission & Security
+- **Role-Based Access Control**: Granular permission system with groups
+- **API Authentication**: Secure API access with Sanctum
+- **Group Management**: Organize permissions into logical groups
+- **Permission Validation**: Comprehensive validation for all operations
 
-## Learning Laravel
+### 📊 Advanced Features
+- **Inventory Management**: Real-time stock tracking with automatic updates
+- **Audit Logging**: Detailed logs for inventory changes and operations
+- **Error Handling**: Comprehensive error handling with meaningful messages
+- **Data Validation**: Robust validation for all inputs and operations
+- **Relationship Management**: Complex model relationships with proper constraints
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+## 🚀 Technology Stack
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+- **Framework**: Laravel 11
+- **Database**: MySQL/SQLite
+- **Authentication**: Laravel Sanctum
+- **Permissions**: Custom role-based system
+- **API**: RESTful API with comprehensive endpoints
+- **Validation**: Laravel Form Requests
+- **Database**: Eloquent ORM with advanced relationships
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## 📋 API Endpoints
 
-## Laravel Sponsors
+### Medication Management
+- `GET /api/poultry-medication-records` - List medication records
+- `POST /api/poultry-medication-records` - Create medication record
+- `DELETE /api/poultry-medication-records/{id}` - Delete medication record
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+### Vaccination Management
+- `GET /api/poultry-vaccination-records` - List vaccination records
+- `POST /api/poultry-vaccination-records` - Create vaccination record
+- `DELETE /api/poultry-vaccination-records/{id}` - Delete vaccination record
 
-### Premium Partners
+### Supporting Endpoints
+- `GET /api/vaccines` - List available vaccines
+- `GET /api/vaccine-inventories` - List vaccine inventory
+- `GET /api/administration-methods` - List administration methods
+- `GET /api/medication-products` - List medication products
+- `GET /api/medication-inventories` - List medication inventory
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+## 🛠️ Installation
 
-## Contributing
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/blockiFi/LivestockProBackend.git
+   cd LivestockProBackend
+   ```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+2. **Install dependencies**
+   ```bash
+   composer install
+   ```
 
-## Code of Conduct
+3. **Environment setup**
+   ```bash
+   cp .env.example .env
+   php artisan key:generate
+   ```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+4. **Database setup**
+   ```bash
+   php artisan migrate
+   php artisan db:seed
+   ```
 
-## Security Vulnerabilities
+5. **Start the server**
+   ```bash
+   php artisan serve
+   ```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## 🔧 Configuration
 
-## License
+### Database Configuration
+Update your `.env` file with database credentials:
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=livestock_pro
+DB_USERNAME=your_username
+DB_PASSWORD=your_password
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+### API Configuration
+Configure Sanctum for API authentication:
+```env
+SANCTUM_STATEFUL_DOMAINS=localhost:3000,127.0.0.1:3000
+```
+
+## 📊 Database Schema
+
+### Key Models
+- **Flock**: Core flock management
+- **PoultryMedicationRecord**: Medication administration tracking
+- **PoultryVaccinationRecord**: Vaccination tracking
+- **MedicationProduct**: Available medications
+- **VaccineProduct**: Available vaccines
+- **Inventory Models**: Stock management for medications and vaccines
+- **Permission & Group**: Role-based access control
+
+### Relationships
+- Flocks have many medication and vaccination records
+- Records are linked to products and inventory items
+- Automatic inventory updates on record creation/deletion
+- Comprehensive audit trails for all operations
+
+## 🧪 Testing
+
+Run the test suite:
+```bash
+php artisan test
+```
+
+For enhanced seeder testing:
+```bash
+php test_enhanced_seeders.php
+```
+
+## 📝 Key Features Implementation
+
+### Inventory Management
+- Automatic stock reduction when creating records
+- Automatic stock restoration when deleting records
+- Real-time inventory validation
+- Comprehensive error handling for insufficient stock
+
+### Permission System
+- Group-based permission organization
+- Granular access control for all operations
+- Dynamic permission validation
+- Secure API endpoints with proper authorization
+
+### Error Handling
+- Meaningful error messages for all operations
+- Validation errors with detailed feedback
+- Database constraint handling
+- Inventory insufficient stock protection
+
+## 🤝 Contributing
+
+We welcome contributions to LiveStock Pro! Please follow these steps:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## 🆘 Support
+
+For support and questions:
+- Create an issue on GitHub
+- Check the documentation
+- Review the API endpoints
+
+## 🎯 Roadmap
+
+- [ ] Mobile API enhancements
+- [ ] Advanced analytics dashboard
+- [ ] Integration with IoT devices
+- [ ] Multi-farm management
+- [ ] Advanced reporting features
+- [ ] Automated alert system
+
+---
+
+Built with ❤️ for modern livestock management
