@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
 use App\Models\PoultryFeedUsage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -52,9 +53,31 @@ class FeedUsageController extends ApiController
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
-        $usage = PoultryFeedUsage::create(array_merge($request->all(), [
-            'farm_id' => $farm->id
-        ]));
+
+        // Get the feed inventory record first to check availability
+        $feedInventory = \App\Models\PoultryFeedInventory::findOrFail($request->poultry_feed_inventory_id);
+        
+        // Check if there's enough inventory
+        if ($feedInventory->quantity < $request->quantity) {
+            return $this->sendError('Insufficient inventory quantity. Available: ' . $feedInventory->quantity . ', Requested: ' . $request->quantity, [], 400);
+        }
+
+        // Use database transaction to ensure atomicity
+        $usage = DB::transaction(function () use ($request, $farm, $feedInventory) {
+            // Reduce inventory quantity
+            $feedInventory->decrement('quantity', $request->quantity);
+            
+            // Update inventory status based on new quantity
+            $feedInventory->refresh();
+            $feedInventory->updateStatusBasedOnQuantity();
+            
+            // Create the usage record
+            return PoultryFeedUsage::create(array_merge($request->all(), [
+                'farm_id' => $farm->id,
+                'created_by' => auth()->id()
+            ]));
+        });
+
         return $this->sendResponse($usage, 'Feed usage created successfully', 201);
     }
 
@@ -92,7 +115,37 @@ class FeedUsageController extends ApiController
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
-        $usage->update($request->all());
+
+        // Handle inventory adjustments if quantity is being updated
+        if ($request->has('quantity') && $request->quantity != $usage->quantity) {
+            DB::transaction(function () use ($request, $usage) {
+                $feedInventory = $usage->feedInventory;
+                
+                if ($feedInventory) {
+                    $quantityDifference = $request->quantity - $usage->quantity;
+                    
+                    // Adjust inventory based on quantity difference
+                    if ($quantityDifference > 0) {
+                        // Quantity increased - reduce inventory
+                        $feedInventory->decrement('quantity', $quantityDifference);
+                    } elseif ($quantityDifference < 0) {
+                        // Quantity decreased - return to inventory
+                        $feedInventory->increment('quantity', abs($quantityDifference));
+                    }
+                    
+                    // Update inventory status based on new quantity
+                    $feedInventory->refresh();
+                    $feedInventory->updateStatusBasedOnQuantity();
+                }
+                
+                // Update the usage record
+                $usage->update($request->all());
+            });
+        } else {
+            // No quantity change, just update normally
+            $usage->update($request->all());
+        }
+
         return $this->sendResponse($usage, 'Feed usage updated successfully');
     }
 
@@ -106,7 +159,25 @@ class FeedUsageController extends ApiController
         if ($usage->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Feed usage not found in this farm');
         }
-        $usage->delete();
+
+        // Use database transaction to ensure atomicity
+        \DB::transaction(function () use ($usage) {
+            // Get the feed inventory record
+            $feedInventory = $usage->feedInventory;
+            
+            if ($feedInventory) {
+                // Return the quantity to the inventory
+                $feedInventory->increment('quantity', $usage->quantity);
+                
+                // Update inventory status based on new quantity
+                $feedInventory->refresh();
+                $feedInventory->updateStatusBasedOnQuantity();
+            }
+            
+            // Delete the usage record
+            $usage->delete();
+        });
+
         return $this->sendResponse(null, 'Feed usage deleted successfully');
     }
 

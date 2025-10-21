@@ -3,13 +3,11 @@
 namespace App\Models;
 
 use Spatie\Permission\Models\Permission as SpatiePermission;
-
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Permission extends SpatiePermission
 {
-    
-
-    protected $fillable = ['name', 'guard_name'];
+    protected $fillable = ['name', 'guard_name', 'group_id'];
 
     // public static function findOrCreate(string $name, $guardName = null, $farmId = null): self
     // {
@@ -66,4 +64,11 @@ class Permission extends SpatiePermission
         return $query->where('farm_id', $farmId);
     }
 
+    /**
+     * Get the group that owns the permission.
+     */
+    public function group(): BelongsTo
+    {
+        return $this->belongsTo(Group::class);
+    }
 }

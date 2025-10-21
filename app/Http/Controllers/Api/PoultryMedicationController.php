@@ -14,7 +14,7 @@ class PoultryMedicationController extends ApiController
     /**
      * Display a listing of poultry medications.
      */
-    public function index(Request $request, $farm)
+    public function index(Request $request, $farm, $paginated = null)
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
@@ -38,8 +38,14 @@ class PoultryMedicationController extends ApiController
         $sortField = $request->input('sort_by', 'name');
         $sortDirection = $request->input('sort_direction', 'asc');
         $query->orderBy($sortField, $sortDirection);
-        $perPage = $request->input('per_page', 10);
-        $medications = $query->paginate($perPage);
+        
+        if ($paginated || $request->has('page') || $request->has('per_page')) {
+            $perPage = $request->input('per_page', 10);
+            $medications = $query->paginate($perPage);
+        } else {
+            $medications = $query->get();
+        }
+        
         return $this->sendResponse($medications, 'Poultry medications retrieved successfully');
     }
 

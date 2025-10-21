@@ -17,7 +17,7 @@ class MedicationInventoryController extends ApiController
     /**
      * Display a listing of medication inventory for a specific farm.
      */
-    public function index(Request $request, $farmId)
+    public function index(Request $request, $farmId, $paginated = null)
     {
         $validator = Validator::make(['farm_id' => $farmId], [
             'farm_id' => 'required|exists:farms,id'
@@ -64,7 +64,13 @@ class MedicationInventoryController extends ApiController
         $sortField = $request->input('sort_by', 'created_at');
         $sortDirection = $request->input('sort_direction', 'desc');
         $query->orderBy($sortField, $sortDirection);
-        $inventory = $query->paginate($request->per_page ?? 15);
+        
+        if ($paginated || $request->has('page') || $request->has('per_page')) {
+            $inventory = $query->paginate($request->per_page ?? 15);
+        } else {
+            $inventory = $query->get();
+        }
+        
         return $this->sendResponse($inventory, 'Medication inventory retrieved successfully');
     }
 

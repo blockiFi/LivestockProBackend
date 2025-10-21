@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Validator;
 
 class ScheduleController extends ApiController
 {
-    public function index()
+    public function index($paginated = null)
     {
         $farmId = request('farm_id');
         $type = request('type');
@@ -19,15 +19,20 @@ class ScheduleController extends ApiController
         if ($farmId && !auth()->user()->can('view schedules', 'api', $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to view schedules');
         }
-        $schedules = Schedule::with(['items', 'batchSchedules', 'farm'])
+        $query = Schedule::with(['items', 'batchSchedules', 'farm'])
             ->where('schedule_type', $type)
             ->where(function ($query) use ($farmId) {
                 $query->where('type', 'default');
                 if ($farmId) {
                     $query->orWhere('farm_id', $farmId);
                 }
-            })
-            ->paginate(5);
+            });
+            
+        if ($paginated || request()->has('page') || request()->has('per_page')) {
+            $schedules = $query->paginate(request('per_page', 5));
+        } else {
+            $schedules = $query->get();
+        }
         return $this->sendResponse($schedules, 'Schedules retrieved successfully');
     }
 

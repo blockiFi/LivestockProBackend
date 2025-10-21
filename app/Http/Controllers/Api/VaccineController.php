@@ -13,7 +13,7 @@ class VaccineController extends ApiController
     /**
      * Display a listing of the vaccines.
      */
-    public function index(Request $request, $farm)
+    public function index(Request $request, $farm , $paginated = null)
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
@@ -44,8 +44,12 @@ class VaccineController extends ApiController
         $query->orderBy($sortField, $sortDirection);
 
         // Paginate results
-        $perPage = $request->input('per_page', 10);
-        $vaccines = $query->paginate($perPage);
+        if ($paginated) {
+            $perPage = $request->input('per_page', 10);
+            $vaccines = $query->paginate($perPage);
+        } else {
+            $vaccines = $query->get();
+        }
 
         return $this->sendResponse($vaccines, 'Vaccines retrieved successfully');
     }

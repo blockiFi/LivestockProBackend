@@ -20,7 +20,7 @@ class VaccineInventoryController extends ApiController
     /**
      * Display a listing of vaccine inventory for a specific farm.
      */
-    public function index(Request $request, $farmId)
+    public function index(Request $request, $farmId , $paginated = null)
     {
         $validator = Validator::make(['farm_id' => $farmId], [
             'farm_id' => 'required|exists:farms,id'
@@ -37,7 +37,7 @@ class VaccineInventoryController extends ApiController
             return $this->sendError('You do not have permission to view vaccine inventory', [], 403);
         }
 
-        $query = PoultryVaccineInventory::with(['product.vaccine', 'country', 'createdBy'])
+        $query = PoultryVaccineInventory::with(['product.vaccine', 'createdBy'])
             ->where('farm_id', $farmId);
 
         // Apply filters
@@ -80,7 +80,12 @@ class VaccineInventoryController extends ApiController
         $sortDirection = $request->input('sort_direction', 'desc');
         $query->orderBy($sortField, $sortDirection);
 
-        $inventory = $query->paginate($request->per_page ?? 15);
+        if ($paginated || $request->has('page') || $request->has('per_page')) {
+            $perPage = $request->input('per_page', 15);
+            $inventory = $query->paginate($perPage);
+        } else {
+            $inventory = $query->get();
+        }
 
         return $this->sendResponse($inventory, 'Vaccine inventory retrieved successfully');
     }
@@ -154,7 +159,7 @@ class VaccineInventoryController extends ApiController
 
             DB::commit();
 
-            $inventory->load(['product.vaccine', 'country', 'createdBy']);
+            $inventory->load(['product.vaccine', 'createdBy']);
 
             return $this->sendResponse($inventory, 'Vaccine inventory created successfully', 201);
 
@@ -220,7 +225,6 @@ class VaccineInventoryController extends ApiController
             'manufacture_date' => 'nullable|date',
             'expiry_date' => 'nullable|date|after:manufacture_date',
             'unit_cost' => 'sometimes|numeric|min:0',
-            'country_id' => 'sometimes|exists:countries,id',
         ]);
 
         if ($validator->fails()) {
@@ -232,7 +236,7 @@ class VaccineInventoryController extends ApiController
 
             $inventory->update($request->only([
                 'quantity', 'status', 'batch_number', 'manufacture_date', 
-                'expiry_date', 'unit_cost', 'country_id'
+                'expiry_date', 'unit_cost'
             ]));
 
             $this->RegisterEvent(
@@ -244,7 +248,7 @@ class VaccineInventoryController extends ApiController
 
             DB::commit();
 
-            $inventory->load(['product.vaccine', 'country', 'createdBy']);
+            $inventory->load(['product.vaccine', 'createdBy']);
 
             return $this->sendResponse($inventory, 'Vaccine inventory updated successfully');
 
@@ -359,7 +363,7 @@ class VaccineInventoryController extends ApiController
             return $this->sendError('You do not have permission to view vaccine inventory', [], 403);
         }
 
-        $query = PoultryVaccineInventory::with(['product.vaccine', 'country'])
+        $query = PoultryVaccineInventory::with(['product.vaccine'])
             ->where('farm_id', $farmId);
 
         $alerts = [

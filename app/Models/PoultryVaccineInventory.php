@@ -30,15 +30,8 @@ class PoultryVaccineInventory extends Model
         'expiry_date' => 'date',
     ];
 
-    public function getUnitCostAttribute($value)
-    {
-        return $value !== null ? (string) number_format((float) $value, 2, '.', '') : null;
-    }
-
-    public function getQuantityAttribute($value)
-    {
-        return $value !== null ? (string) number_format((float) $value, 2, '.', '') : null;
-    }
+    // Remove the problematic accessors that convert to strings
+    // We need numeric values for arithmetic operations
  
     public function farm(): BelongsTo
     {
@@ -49,8 +42,6 @@ class PoultryVaccineInventory extends Model
     {
         return $this->belongsTo(PoultryVaccineProduct::class, 'poultry_vaccine_product_id');
     }
-
-   
 
     public function createdBy(): BelongsTo
     {
@@ -128,4 +119,4 @@ class PoultryVaccineInventory extends Model
                $this->expiry_date->isFuture() && 
                $this->expiry_date->diffInDays(now()) <= 30;
     }
-} 
+}

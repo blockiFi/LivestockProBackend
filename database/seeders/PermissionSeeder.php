@@ -37,6 +37,8 @@ class PermissionSeeder extends Seeder
             'create sales', 'delete sales', 'manage sales', 'update sales', 'view sales',
             // Medication Management (from controllers)
             'create medications', 'delete medications', 'update medications', 'view medications',
+            // Medication Record Management
+            'create medication records', 'delete medication records', 'update medication records', 'view medication records',
             // Medication Product Management
             'create medication products', 'delete medication products', 'update medication products', 'view medication products',
             // Feed Inventory Management
@@ -61,6 +63,8 @@ class PermissionSeeder extends Seeder
             'create feeding schedules', 'delete feeding schedules', 'update feeding schedules', 'view feeding schedules',
             // Vaccine Management
             'create vaccines', 'delete vaccines', 'update vaccines', 'view vaccines',
+            // Vaccination Record Management
+            'create vaccination records', 'delete vaccination records', 'update vaccination records', 'view vaccination records',
         ];
         $permissions = array_values(array_unique($permissions));
         sort($permissions);

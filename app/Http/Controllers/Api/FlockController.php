@@ -23,7 +23,7 @@ class FlockController extends ApiController
     /**
      * Display a listing of the flocks for a specific farm.
      */
-    public function index(Request $request, $farmId ,$Params = null)
+    public function index(Request $request, $farmId, $paginated = null)
     {   
         $validator = Validator::make(['farm_id' => $farmId], [
             'farm_id' => 'required|exists:farms,id'
@@ -40,7 +40,7 @@ class FlockController extends ApiController
             return $this->sendError('You do not have permission to view flocks', [], 403);
         }
 
-        $flocks = Flock::with(['poultryType', 'flockStage', 'poultryHouse'])
+        $query = Flock::with(['poultryType', 'flockStage', 'poultryHouse'])
             ->where('farm_id', $farmId)
             ->when($request->status, function ($query, $status) {
                 return $query->where('status', $status);
@@ -49,11 +49,37 @@ class FlockController extends ApiController
                 return $query->where('name', 'like', "%{$search}%")
                     ->orWhere('batch_number', 'like', "%{$search}%");
             })
-            ->orderBy('created_at', 'desc')
-            ->paginate($Params->perPage ?? 6);
+            ->orderBy('created_at', 'desc');
+
+        // Check if pagination is requested
+        if ($paginated === 'paginated' || $request->has('page') || $request->has('perPage')) {
+            $perPage = (int) ($request->perPage ?? 10);
+            $page = (int) ($request->page ?? 1);
+            
+            // Get total count to validate page number
+            $totalCount = $query->count();
+            $lastPage = (int) ceil($totalCount / $perPage);
+            
+            // If requesting a page beyond the last page and total count > 0, redirect to last page
+            if ($page > $lastPage && $totalCount > 0) {
+                return $this->sendError('Requested page does not exist. Last available page is ' . $lastPage, [
+                    'requested_page' => $page,
+                    'last_page' => $lastPage,
+                    'total_items' => $totalCount,
+                    'per_page' => $perPage
+                ], 400);
+            }
+            
+            $flocks = $query->paginate($perPage);
+        } else {
+            $flocks = $query->get();
+        }
+
+        // Update flock stages
         foreach ($flocks as $flock) {
             $this->updateFlockStage($flock);
         }
+
         return $this->sendResponse($flocks, 'Flocks retrieved successfully');
     }
 

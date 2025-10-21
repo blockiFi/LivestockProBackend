@@ -15,7 +15,12 @@ class PoultryMedicationInventory extends Model
         'batch_number',
         'farm_id',
         'medication_product_id',
-        'created_by'
+        'created_by',
+        'status',
+        'manufacturer',
+        'notes',
+        'manufacture_date',
+        'last_restocked'
     ];
 
     public function farm(): BelongsTo
@@ -36,5 +41,29 @@ class PoultryMedicationInventory extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
+     * Update the status based on current quantity
+     */
+    public function updateStatus()
+    {
+        if ($this->quantity <= 0) {
+            $this->status = 'depleted';
+        } elseif ($this->quantity <= 10) { // Low stock threshold - can be made configurable
+            $this->status = 'in_use';
+        } else {
+            $this->status = 'available';
+        }
+        
+        $this->save();
+    }
+
+    /**
+     * Check if inventory has sufficient quantity
+     */
+    public function hasSufficientQuantity($requiredQuantity)
+    {
+        return $this->quantity >= $requiredQuantity;
     }
 } 

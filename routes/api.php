@@ -31,6 +31,9 @@ use App\Http\Controllers\Api\ScheduleItemController;
 use App\Http\Controllers\Api\BatchScheduleController;
 use App\Http\Controllers\Api\BatchScheduleItemController;
 use App\Http\Controllers\Api\FlockDailyRecordController;
+use App\Http\Controllers\Api\PoultryMedicationRecordController;
+use App\Http\Controllers\Api\PoultryVaccinationRecordController;
+use App\Http\Controllers\Api\AdministrationMethodController;
 
 
 
@@ -54,6 +57,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::prefix('flock-stages')->group(function () {
         Route::get('/', [FlockStageController::class, 'index']);
+        Route::get('/paginated', [FlockStageController::class, 'index'])->defaults('pagination', true);
         Route::get('/{flockStage}', [FlockStageController::class, 'show']);
     });
 
@@ -77,7 +81,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Flock routes
         Route::prefix('farms/{farm}/flocks')->group(function () {
-            Route::get('/{Params?}', [FlockController::class, 'index']);
+            Route::get('/', [FlockController::class, 'index']);
+            Route::get('/paginated', [FlockController::class, 'index'])->defaults('paginated', true);
             Route::post('/', [FlockController::class, 'store']);
             Route::get('/{flock}/get', [FlockController::class, 'show']);
             Route::put('/{flock}', [FlockController::class, 'update']);
@@ -105,6 +110,24 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/{flockDailyRecord}', [FlockDailyRecordController::class, 'show']);
             Route::put('/{flockDailyRecord}', [FlockDailyRecordController::class, 'update']);
             Route::delete('/{flockDailyRecord}', [FlockDailyRecordController::class, 'destroy']);
+        });
+
+        // Medication Records routes
+        Route::prefix('farms/{farm}/medication-records')->group(function () {
+            Route::get('/', [PoultryMedicationRecordController::class, 'index']);
+            Route::post('/', [PoultryMedicationRecordController::class, 'store']);
+            Route::get('/{medicationRecord}', [PoultryMedicationRecordController::class, 'show']);
+            Route::put('/{medicationRecord}', [PoultryMedicationRecordController::class, 'update']);
+            Route::delete('/{medicationRecord}', [PoultryMedicationRecordController::class, 'destroy']);
+        });
+
+        // Vaccination Records routes
+        Route::prefix('farms/{farm}/vaccination-records')->group(function () {
+            Route::get('/', [PoultryVaccinationRecordController::class, 'index']);
+            Route::post('/', [PoultryVaccinationRecordController::class, 'store']);
+            Route::get('/{vaccinationRecord}', [PoultryVaccinationRecordController::class, 'show']);
+            Route::put('/{vaccinationRecord}', [PoultryVaccinationRecordController::class, 'update']);
+            Route::delete('/{vaccinationRecord}', [PoultryVaccinationRecordController::class, 'destroy']);
         });
   
 
@@ -144,7 +167,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Vaccine Routes
     Route::prefix('farms/{farm}/vaccines')->group(function () {
-        Route::get('/', [VaccineController::class, 'index']);
+        Route::get('/{paginated?}', [VaccineController::class, 'index']);
         Route::post('/', [VaccineController::class, 'store']);
         Route::get('/{vaccine}', [VaccineController::class, 'show']);
         Route::put('/{vaccine}', [VaccineController::class, 'update']);
@@ -164,7 +187,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Vaccine Inventory Routes
     Route::prefix('farms/{farm}/vaccine-inventory')->group(function () {
-        Route::get('/', [VaccineInventoryController::class, 'index']);
+        Route::get('/{paginated?}', [VaccineInventoryController::class, 'index']);
         Route::post('/', [VaccineInventoryController::class, 'store']);
         Route::get('/statistics', [VaccineInventoryController::class, 'statistics']);
         Route::get('/alerts', [VaccineInventoryController::class, 'alerts']);
@@ -188,6 +211,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Medication Inventory Routes
     Route::prefix('farms/{farm}/medication-inventory')->group(function () {
         Route::get('/', [MedicationInventoryController::class, 'index']);
+        Route::get('/paginated', [MedicationInventoryController::class, 'index'])->defaults('paginated', true);
         Route::post('/', [MedicationInventoryController::class, 'store']);
         Route::get('/statistics', [MedicationInventoryController::class, 'statistics']);
         Route::get('/alerts', [MedicationInventoryController::class, 'alerts']);
@@ -201,6 +225,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Poultry Medication Routes
     Route::prefix('farms/{farm}/medications')->group(function () {
         Route::get('/', [PoultryMedicationController::class, 'index']);
+        Route::get('/paginated', [PoultryMedicationController::class, 'index'])->defaults('paginated', true);
         Route::post('/', [PoultryMedicationController::class, 'store']);
         Route::get('/{medication}', [PoultryMedicationController::class, 'show']);
         Route::put('/{medication}', [PoultryMedicationController::class, 'update']);
@@ -210,6 +235,15 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Countries route (global, not farm-specific)
     Route::get('/countries', [VaccineInventoryController::class, 'countries']);
+
+    // Administration Methods (global, not farm-specific)
+    Route::prefix('administration-methods')->group(function () {
+        Route::get('/', [AdministrationMethodController::class, 'index']);
+        Route::post('/', [AdministrationMethodController::class, 'store']);
+        Route::get('/{administrationMethod}', [AdministrationMethodController::class, 'show']);
+        Route::put('/{administrationMethod}', [AdministrationMethodController::class, 'update']);
+        Route::delete('/{administrationMethod}', [AdministrationMethodController::class, 'destroy']);
+    });
 
     // Feed Type Routes
     Route::prefix('farms/{farm}/feed-types')->group(function () {
@@ -224,6 +258,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Feed Inventory Routes
     Route::prefix('farms/{farm}/feed-inventories')->group(function () {
         Route::get('/', [FeedInventoryController::class, 'index']);
+        Route::get('/paginated', [FeedInventoryController::class, 'index'])->defaults('pagination', true);
         Route::post('/', [FeedInventoryController::class, 'store']);
         Route::get('/statistics', [FeedInventoryController::class, 'statistics']);
         Route::get('/{inventory}', [FeedInventoryController::class, 'show']);
@@ -282,7 +317,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Scheduling management
     Route::prefix('farms/{farm}/{type}')->group(function () {
-        Route::apiResource('schedules', ScheduleController::class);
+        Route::get('schedules', [ScheduleController::class, 'index']);
+        Route::get('schedules/paginated', [ScheduleController::class, 'index'])->defaults('paginated', true);
+        Route::post('schedules', [ScheduleController::class, 'store']);
+        Route::get('schedules/{schedule}', [ScheduleController::class, 'show']);
+        Route::put('schedules/{schedule}', [ScheduleController::class, 'update']);
+        Route::delete('schedules/{schedule}', [ScheduleController::class, 'destroy']);
         Route::apiResource('schedule-items', ScheduleItemController::class);
         Route::apiResource('batch-schedules', BatchScheduleController::class);
         Route::apiResource('batch-schedule-items', BatchScheduleItemController::class);
