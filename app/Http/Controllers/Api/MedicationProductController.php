@@ -74,6 +74,7 @@ class MedicationProductController extends ApiController
             'dosage' => 'nullable|numeric|min:0',
             'dosage_unit' => 'nullable|string|max:50',
             'image_url' => 'nullable|url',
+            'min_stock_level' => 'nullable|integer|min:0',
             
         ]);
         if ($validator->fails()) {
@@ -134,6 +135,7 @@ class MedicationProductController extends ApiController
             'dosage' => 'nullable|numeric|min:0',
             'dosage_unit' => 'nullable|string|max:50',
             'image_url' => 'nullable|url',
+            'min_stock_level' => 'nullable|integer|min:0',
             'type' => ['sometimes', 'required', Rule::in(['default', 'user'])],
         ]);
         if ($validator->fails()) {
@@ -195,4 +197,4 @@ class MedicationProductController extends ApiController
         ];
         return $this->sendResponse($statistics, 'Medication product statistics retrieved successfully');
     }
-} 
+}

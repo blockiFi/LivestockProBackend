@@ -53,7 +53,50 @@ class VaccineController extends ApiController
 
         return $this->sendResponse($vaccines, 'Vaccines retrieved successfully');
     }
+    
+    /**
+     * Display a listing of the vaccines with products and inventories.
+     */
+    public function data(Request $request, $farm)
+    {
+        $user = $request->user();
+        $farm = Farm::findOrFail($farm);
 
+        // Check if user has permission to view vaccines
+        if (!$user->hasPermissionTo('view vaccines', 'api', $farm)) {
+            return $this->sendUnauthorizedError('Unauthorized to view vaccines');
+        }
+
+        // Apply filters
+        $query = PoultryVaccine::with(['products' => function($q) {
+                $q->with('inventories');
+            }])
+            ->where(function($q) use ($farm) {
+                $q->where('farm_id', $farm->id)
+                  ->orWhereNull('farm_id');
+            });
+
+        if ($request->has('type')) {
+            $query->where('type', $request->type);
+        }
+        if ($request->has('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('description', 'like', "%{$search}%");
+            });
+        }
+
+        // Apply sorting
+        $sortField = $request->input('sort_by', 'name');
+        $sortDirection = $request->input('sort_direction', 'asc');
+        $query->orderBy($sortField, $sortDirection);
+
+        $vaccines = $query->get();
+
+        return $this->sendResponse($vaccines, 'Vaccines retrieved successfully');
+    }
+    
     /**
      * Store a newly created vaccine.
      */

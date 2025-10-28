@@ -11,8 +11,8 @@ class ScheduleController extends ApiController
 {
     public function index($paginated = null)
     {
-        $farmId = request('farm_id');
-        $type = request('type');
+        $farmId = request()->route('farm') ?? request('farm_id');
+        $type = request()->route('type') ?? request('type');
         if (!in_array($type, ['medication', 'vaccination'])) {
             return $this->sendValidationError('Invalid type. Type must be either medication or vaccination.');
         }
@@ -28,8 +28,9 @@ class ScheduleController extends ApiController
                 }
             });
             
-        if ($paginated || request()->has('page') || request()->has('per_page')) {
-            $schedules = $query->paginate(request('per_page', 5));
+        $perPage = request('per_page') ?? request('perPage') ?? 5;
+        if ($paginated || request()->has('page') || request()->has('per_page') || request()->has('perPage')) {
+            $schedules = $query->paginate($perPage);
         } else {
             $schedules = $query->get();
         }
@@ -38,22 +39,29 @@ class ScheduleController extends ApiController
 
     public function store(Request $request)
     {
-        $farmId = $request->farm_id;
+        $farmId = $request->route('farm') ?? $request->farm_id;
         if ($farmId && !auth()->user()->can('create schedules', 'api', $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to create schedules');
         }
+        $routeType = $request->route('type');
+        $scheduleType = $routeType ?? $request->input('schedule_type');
+        if (!in_array($scheduleType, ['medication', 'vaccination'])) {
+            return $this->sendValidationError('Invalid schedule_type. Must be medication or vaccination.');
+        }
         $validator = Validator::make($request->all(), [
-            'schedule_type' => 'required|in:medication,vaccination',
+            // schedule_type comes from route or body
             'poultry_type_id' => 'required|exists:poultry_types,id',
-           
+            'feeding_type_id' => 'integer',
             'farm_id' => 'nullable|exists:farms,id',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            // items validation intentionally omitted here; created via separate endpoint
         ]);
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
-        $data = $request->only(['schedule_type', 'poultry_type_id', 'farm_id', 'name', 'description']);
+        $data = $request->only(['poultry_type_id', 'farm_id', 'name', 'description']);
+        $data['schedule_type'] = $scheduleType;
         $data['type'] = 'user';
         $schedule = Schedule::create($data);
         return $this->sendResponse($schedule, 'Schedule created successfully', 201);
@@ -116,4 +124,4 @@ class ScheduleController extends ApiController
         $schedule->delete();
         return $this->sendResponse(null, 'Schedule deleted successfully');
     }
-} 
+}

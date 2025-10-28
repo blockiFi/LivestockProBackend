@@ -14,7 +14,9 @@ class Schedule extends Model
         'status',
         'type',
         'farm_id',
-        'created_by'
+        'created_by',
+        'schedule_type',
+        'poultry_type_id',
     ];
 
     public function items(): HasMany
@@ -36,4 +38,9 @@ class Schedule extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
-} 
+
+    public function poultryType(): BelongsTo
+    {
+        return $this->belongsTo(PoultryType::class, 'poultry_type_id');
+    }
+}

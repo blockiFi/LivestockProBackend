@@ -167,6 +167,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Vaccine Routes
     Route::prefix('farms/{farm}/vaccines')->group(function () {
+        Route::get('/data', [VaccineController::class, 'data']);
         Route::get('/{paginated?}', [VaccineController::class, 'index']);
         Route::post('/', [VaccineController::class, 'store']);
         Route::get('/{vaccine}', [VaccineController::class, 'show']);
@@ -226,6 +227,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('farms/{farm}/medications')->group(function () {
         Route::get('/', [PoultryMedicationController::class, 'index']);
         Route::get('/paginated', [PoultryMedicationController::class, 'index'])->defaults('paginated', true);
+        Route::get('/data', [PoultryMedicationController::class, 'data']);
         Route::post('/', [PoultryMedicationController::class, 'store']);
         Route::get('/{medication}', [PoultryMedicationController::class, 'show']);
         Route::put('/{medication}', [PoultryMedicationController::class, 'update']);

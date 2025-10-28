@@ -54,6 +54,8 @@ class DatabaseSeeder extends Seeder
             PoultryVaccineProductSeeder::class,
             PoultryMedicationSeeder::class,
             MedicationProductSeeder::class,
+            // Ensure per-farm vaccine product permissions exist and are assigned to farm owners
+            VaccineProductPermissionSeeder::class,
 
             // 5. Inventory
             EnhancedInventorySeeder::class,

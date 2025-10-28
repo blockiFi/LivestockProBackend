@@ -10,6 +10,7 @@ class PoultryFeedInventory extends Model
 {
     protected $fillable = [
         'quantity',
+        'available_quantity',
         'unit_cost',
         'expiry_date',
         'batch_number',
@@ -91,4 +92,4 @@ class PoultryFeedInventory extends Model
     {
         return $query->where('status', 'depleted');
     }
-} 
+}

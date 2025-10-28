@@ -15,6 +15,7 @@ class PoultryVaccineInventory extends Model
         'poultry_vaccine_product_id',
         'farm_id',
         'quantity',
+        'available_quantity',
         'status',
         'batch_number',
         'manufacture_date',
@@ -25,6 +26,7 @@ class PoultryVaccineInventory extends Model
 
     protected $casts = [
         'quantity' => 'decimal:2',
+        'available_quantity' => 'decimal:2',
         'unit_cost' => 'decimal:2',
         'manufacture_date' => 'date',
         'expiry_date' => 'date',

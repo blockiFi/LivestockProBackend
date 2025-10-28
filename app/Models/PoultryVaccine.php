@@ -123,4 +123,6 @@ class PoultryVaccine extends Model
     {
         return $this->hasMany(PoultryVaccineProduct::class);
     }
+
+    
 }

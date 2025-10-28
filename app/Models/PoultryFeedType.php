@@ -15,7 +15,8 @@ class PoultryFeedType extends Model
         'description',
         'status',
         'farm_id',
-        'created_by'
+        'created_by',
+        'min_stock_level'
     ];
 
     public function inventories(): HasMany
@@ -40,4 +41,4 @@ class PoultryFeedType extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
-} 
+}

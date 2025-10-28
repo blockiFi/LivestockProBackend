@@ -20,6 +20,7 @@ class MedicationProduct extends Model
         'withdrawal_period_unit',
         'dosage',
         'dosage_unit',
+        'min_stock_level',
     ];
 
     public function inventories(): HasMany
@@ -46,4 +47,4 @@ class MedicationProduct extends Model
     {
         return $this->belongsTo(PoultryMedication::class, 'poultry_medication_id');
     }
-} 
+}

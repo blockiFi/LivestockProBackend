@@ -14,8 +14,16 @@ class PoultryVaccineProduct extends Model
         'manufacturer',
         'status',
         'farm_id',
+        'type',
         'poultry_vaccine_id',
-        'created_by'
+        'administration_method_id',
+        'withdrawal_period',
+        'withdrawal_period_unit',
+        'dosage',
+        'dosage_unit',
+        'image_url',
+        'created_by',
+        'min_stock_level',
     ];
 
     public function inventories(): HasMany
@@ -45,4 +53,4 @@ public function administrationMethod(): BelongsTo
 {
     return $this->belongsTo(AdministrationMethod::class);
 }
-} 
+}

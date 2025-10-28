@@ -20,10 +20,12 @@ class VaccineProductController extends ApiController
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        // Check if user has permission to view vaccine products
-        if (!$user->hasPermissionTo('view vaccine products', 'api', $farm)) {
-            return $this->sendUnauthorizedError('Unauthorized to view vaccine products');
-        }
+        // Check if user has permission to view vaccine products or broader inventory permissions
+        if (!($user->hasPermissionTo('view vaccine products', 'api', $farm)
+            || $user->hasPermissionTo('view vaccine inventory', 'api', $farm)
+            || $user->hasPermissionTo('view inventory', 'api', $farm))) {
+             return $this->sendUnauthorizedError('Unauthorized to view vaccine products');
+         }
 
         // Build query for vaccine products
         $query = PoultryVaccineProduct::where(function($q) use ($farm) {
@@ -75,10 +77,13 @@ class VaccineProductController extends ApiController
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        // Check if user has permission to create vaccine products
-        if (!$user->hasPermissionTo('create vaccine products', 'api', $farm)) {
-            return $this->sendUnauthorizedError('Unauthorized to create vaccine products');
-        }
+        // Check if user has permission to create vaccine products or broader inventory permissions
+        if (!($user->hasPermissionTo('create vaccine products', 'api', $farm)
+            || $user->hasPermissionTo('manage vaccine inventory', 'api', $farm)
+            || $user->hasPermissionTo('manage inventory', 'api', $farm)
+            || $user->hasPermissionTo('create vaccines', 'api', $farm))) {
+             return $this->sendUnauthorizedError('Unauthorized to create vaccine products');
+         }
 
         $validator = Validator::make($request->all(), [
             'poultry_vaccine_id' => 'required|exists:poultry_vaccines,id',
@@ -120,10 +125,12 @@ class VaccineProductController extends ApiController
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        // Check if user has permission to view vaccine products
-        if (!$user->hasPermissionTo('view vaccine products', 'api', $farm)) {
-            return $this->sendUnauthorizedError('Unauthorized to view vaccine products');
-        }
+        // Check if user has permission to view vaccine products or broader inventory permissions
+        if (!($user->hasPermissionTo('view vaccine products', 'api', $farm)
+            || $user->hasPermissionTo('view vaccine inventory', 'api', $farm)
+            || $user->hasPermissionTo('view inventory', 'api', $farm))) {
+             return $this->sendUnauthorizedError('Unauthorized to view vaccine products');
+         }
 
         // Verify product belongs to farm or is default
         if ($product->farm_id !== null && $product->farm_id !== $farm->id) {
@@ -143,10 +150,12 @@ class VaccineProductController extends ApiController
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        // Check if user has permission to update vaccine products
-        if (!$user->hasPermissionTo('update vaccine products', 'api', $farm)) {
-            return $this->sendUnauthorizedError('Unauthorized to update vaccine products');
-        }
+        // Check if user has permission to update vaccine products or broader inventory permissions
+        if (!($user->hasPermissionTo('update vaccine products', 'api', $farm)
+            || $user->hasPermissionTo('manage vaccine inventory', 'api', $farm)
+            || $user->hasPermissionTo('manage inventory', 'api', $farm))) {
+             return $this->sendUnauthorizedError('Unauthorized to update vaccine products');
+         }
 
         // Verify product belongs to farm
         if ($product->farm_id !== $farm->id) {
@@ -189,10 +198,12 @@ class VaccineProductController extends ApiController
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        // Check if user has permission to delete vaccine products
-        if (!$user->hasPermissionTo('delete vaccine products', 'api', $farm)) {
-            return $this->sendUnauthorizedError('Unauthorized to delete vaccine products');
-        }
+        // Check if user has permission to delete vaccine products or broader inventory permissions
+        if (!($user->hasPermissionTo('delete vaccine products', 'api', $farm)
+            || $user->hasPermissionTo('manage vaccine inventory', 'api', $farm)
+            || $user->hasPermissionTo('manage inventory', 'api', $farm))) {
+             return $this->sendUnauthorizedError('Unauthorized to delete vaccine products');
+         }
 
         // Verify product belongs to farm
         if ($product->farm_id !== $farm->id) {
@@ -217,10 +228,12 @@ class VaccineProductController extends ApiController
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        // Check if user has permission to view vaccine products
-        if (!$user->hasPermissionTo('view vaccine products', 'api', $farm)) {
-            return $this->sendUnauthorizedError('Unauthorized to view vaccine products');
-        }
+        // Check if user has permission to view vaccine products or broader inventory permissions
+        if (!($user->hasPermissionTo('view vaccine products', 'api', $farm)
+            || $user->hasPermissionTo('view vaccine inventory', 'api', $farm)
+            || $user->hasPermissionTo('view inventory', 'api', $farm))) {
+             return $this->sendUnauthorizedError('Unauthorized to view vaccine products');
+         }
 
         $query = PoultryVaccineProduct::where(function($q) use ($farm) {
             $q->where('farm_id', $farm->id)

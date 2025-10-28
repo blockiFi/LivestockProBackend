@@ -11,6 +11,8 @@ class FeedingSchedule extends Model
         'description',
         'start_date',
         'end_date',
+        'farm_id',
+        'type',
     ];
 
     public function items()
@@ -22,4 +24,4 @@ class FeedingSchedule extends Model
     {
         return $this->hasMany(FeedingBatchSchedule::class);
     }
-} 
+}

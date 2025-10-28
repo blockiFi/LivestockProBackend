@@ -10,6 +10,8 @@ class FeedingScheduleItem extends Model
         'feeding_schedule_id',
         'feed_type_id',
         'feeding_times',
+        'quantity',
+        'feeding_day',
     ];
 
     protected $casts = [
@@ -30,4 +32,4 @@ class FeedingScheduleItem extends Model
     {
         return $this->hasMany(FeedingBatchScheduleItem::class);
     }
-} 
+}

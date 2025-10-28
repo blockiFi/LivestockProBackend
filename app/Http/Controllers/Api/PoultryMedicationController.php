@@ -14,6 +14,7 @@ class PoultryMedicationController extends ApiController
     /**
      * Display a listing of poultry medications.
      */
+    
     public function index(Request $request, $farm, $paginated = null)
     {
         $user = $request->user();
@@ -22,9 +23,9 @@ class PoultryMedicationController extends ApiController
             return $this->sendUnauthorizedError('Unauthorized to view medications');
         }
         $query = PoultryMedication::where(function($q) use ($farm) {
-            $q->where('farm_id', $farm->id)
-              ->orWhereNull('farm_id');
-        });
+                $q->where('farm_id', $farm->id)
+                  ->orWhereNull('farm_id');
+            });
         if ($request->has('type')) {
             $query->where('type', $request->type);
         }
@@ -48,6 +49,44 @@ class PoultryMedicationController extends ApiController
         
         return $this->sendResponse($medications, 'Poultry medications retrieved successfully');
     }
+
+    public function data(Request $request, $farm)
+    {
+       $user = $request->user();
+        $farm = Farm::findOrFail($farm);
+        if (!$user->hasPermissionTo('view medications', 'api', $farm)) {
+            return $this->sendUnauthorizedError('Unauthorized to view medications');
+        }
+        $query = PoultryMedication::with(['products' => function($q) use ($request) {
+                // Optionally eager-load inventories if requested
+                
+                    $q->with('inventories');
+                
+            }])
+            ->where(function($q) use ($farm) {
+                $q->where('farm_id', $farm->id)
+                  ->orWhereNull('farm_id');
+            });
+        if ($request->has('type')) {
+            $query->where('type', $request->type);
+        }
+        if ($request->has('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('description', 'like', "%{$search}%");
+            });
+        }
+        $sortField = $request->input('sort_by', 'name');
+        $sortDirection = $request->input('sort_direction', 'asc');
+        $query->orderBy($sortField, $sortDirection);
+        
+       
+            $medications = $query->get();
+        
+        
+        return $this->sendResponse($medications, 'Poultry medications retrieved successfully');
+    }   
 
     /**
      * Store a newly created poultry medication.
@@ -87,6 +126,11 @@ class PoultryMedicationController extends ApiController
         if ($medication->farm_id !== null && $medication->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Medication not found in this farm');
         }
+        $medication->load(['products' => function($q) use ($request) {
+            if ($request->boolean('with_inventories')) {
+                $q->with('inventories');
+            }
+        }]);
         return $this->sendResponse($medication, 'Poultry medication retrieved successfully');
     }
 
@@ -160,4 +204,4 @@ class PoultryMedicationController extends ApiController
         ];
         return $this->sendResponse($statistics, 'Poultry medication statistics retrieved successfully');
     }
-} 
+}
