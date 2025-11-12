@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use App\Traits\RegisterEvents;
 use App\Exceptions\PermissionDoesNotExist;
+use App\Models\Group;
 use Spatie\Permission\PermissionRegistrar;
 class PermissionController extends ApiController
 {
@@ -35,6 +36,14 @@ class PermissionController extends ApiController
     /**
      * Get all roles
      */
+    public function getGroupPermissions(){
+        if (!auth()->user()->can('view permissions')) {
+            return $this->sendError('You do not have permission to view permissions', [], 403);
+        }
+
+        $permissions = Group::with('permissions')->get();
+        return $this->sendResponse($permissions, 'Grouped permissions retrieved successfully');
+    }
     public function getRoles($farm)
     {   
          $farm = Farm::findOrFail($farm);
@@ -44,9 +53,7 @@ class PermissionController extends ApiController
         }
 
 
-        $roles = Role::with('permissions')
-            ->where('farm_id', $farm)
-            ->get();
+        $roles = Role::where('farm_id', $farm->id)->with('permissions')->get();
         return $this->sendResponse($roles, 'Roles retrieved successfully');
     }
 
@@ -55,21 +62,32 @@ class PermissionController extends ApiController
      */
     public function createRole(Request $request)
     {   
-        
-         app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
-        if (!auth()->user()->can('manage roles')) {
-            return $this->sendError('You do not have permission to manage roles', [], 403);
-        }
-
         $validator = Validator::make($request->all(), [
             'farm_id' => 'required|integer|exists:farms,id',
-            'name' => 'required|string|unique:roles,name',
+            'name' => 'required|string',
             'permissions' => 'required|array',
             'permissions.*' => 'integer', // just check they're integers here
         ]);
         
         if ($validator->fails()) {
             return $this->sendValidationError('Validation Error', $validator->errors()->all());
+        }
+
+        $farm = Farm::findOrFail($request->farm_id);
+        
+        // Check if role name already exists for this farm
+        $existingRole = Role::where('name', $request->name)
+            ->where('farm_id', $request->farm_id)
+            ->first();
+        if ($existingRole) {
+            return $this->sendValidationError('Validation Error', ['A role with this name already exists in this farm']);
+        }
+        
+        // Set the team context (i.e., farm) before any permission checks
+        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+        
+        if (!auth()->user()->can('manage roles', 'api', $farm->id)) {
+            return $this->sendError('You do not have permission to manage roles', [], 403);
         }
         // return Permission::all();
         // Manually validate permission IDs with correct guard
@@ -251,6 +269,76 @@ class PermissionController extends ApiController
         } catch (\Exception $e) {
             DB::rollBack();
             return $this->sendError('Error adding permissions to role', [$e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Remove permissions from a role
+     */
+    public function removePermissionFromRole(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'farm_id' => 'required|exists:farms,id',
+            'role_id' => 'required|exists:roles,id',
+            'permission_ids' => 'required|array',
+            'permission_ids.*' => 'exists:permissions,id'
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation Error', $validator->errors()->all());
+        }
+
+        $farm = Farm::findOrFail($request->farm_id);
+
+        // Set the team context (i.e., farm) before any permission checks
+        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+        
+        if (!auth()->user()->can('manage roles', 'api', $farm->id)) {
+            return $this->sendError('You do not have permission to manage roles', [], 403);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $role = Role::findOrFail($request->role_id);
+
+            // Verify all permissions exist
+            foreach ($request->permission_ids as $permissionId) {
+                $permission = Permission::find($permissionId);
+                if (!$permission) {
+                    throw new PermissionDoesNotExist("Permission with ID {$permissionId} does not exist");
+                }
+            }
+
+            // Remove permissions from role
+            // Use manual detach to ensure team context is properly handled
+            // revokePermissionTo may not work correctly with team context
+            $role->permissions()->detach($request->permission_ids);
+            
+            // Clear the permission cache to ensure changes are reflected
+            app(PermissionRegistrar::class)->forgetCachedPermissions();
+            
+            // Ensure team context is set before reloading permissions
+            app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+
+            $this->RegisterEvent(
+                farmId: $farm->id,
+                eventType: 'permissions_removed_from_role',
+                tableName: 'roles',
+                tableId: $role->id
+            );
+
+            DB::commit();
+
+            // Reload role with permissions in the correct team context
+            $role->refresh();
+            return $this->sendResponse($role->load('permissions'), 'Permissions removed from role successfully');
+        } catch (PermissionDoesNotExist $e) {
+            DB::rollBack();
+            return $this->sendError($e->getMessage(), [], 404);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->sendError('Error removing permissions from role', [$e->getMessage()], 500);
         }
     }
     /**

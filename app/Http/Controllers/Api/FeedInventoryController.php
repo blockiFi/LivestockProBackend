@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
 use App\Models\PoultryFeedInventory;
+use App\Models\PoultryFeedType;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -12,16 +13,18 @@ use Illuminate\Validation\Rule;
 class FeedInventoryController extends ApiController
 {
     public function index(Request $request, $farm ,$pagination = null)
-    {
+    {  
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
         if (!$user->hasPermissionTo('view feed inventories', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to view feed inventories');
         }
-        $query = PoultryFeedInventory::where('farm_id', $farm->id);
-        if ($request->has('feed_type_id')) {
-            $query->where('poultry_feed_type_id', $request->feed_type_id);
-        }
+        // eager-load feed type (as poultry_feed_type alias) and creator
+        $query = PoultryFeedInventory::with([
+            'feedType',
+            'createdby'
+        ])->where('farm_id', $farm->id);
+       
         if ($request->has('search')) {
             $search = $request->search;
             $query->where('batch_number', 'like', "%{$search}%");
@@ -29,7 +32,16 @@ class FeedInventoryController extends ApiController
 
         $sortField = $request->input('sort_by', 'created_at');
         $sortDirection = $request->input('sort_direction', 'desc');
-        $query->orderBy($sortField, $sortDirection);
+        // Always ensure newest items appear first by default.
+        // If the client specifies a sort field, apply it first, then use created_at desc as a tiebreaker.
+        if ($request->has('sort_by')) {
+            $query->orderBy($sortField, $sortDirection);
+            if ($sortField !== 'created_at') {
+                $query->orderBy('created_at', 'desc');
+            }
+        } else {
+            $query->orderBy('created_at', 'desc');
+        }
 
         if ($pagination) {
             $perPage = $request->input('per_page', 10);
@@ -37,6 +49,7 @@ class FeedInventoryController extends ApiController
         } else {
             $inventories = $query->get();
         }
+        
         return $this->sendResponse($inventories, 'Feed inventories retrieved successfully');
     }
 
@@ -61,9 +74,12 @@ class FeedInventoryController extends ApiController
         }
         $inventory = PoultryFeedInventory::create(array_merge($request->all(), [
             'farm_id' => $farm->id,
-            "created_by" => $user->id
+            "created_by" => $user->id,
+            'available_quantity' => $request->quantity,
+            'status' => "available",
         ]));
-        return $this->sendResponse($inventory->load('createdby'), 'Feed inventory created successfully', 201);
+        // load feed type and creator
+        return $this->sendResponse($inventory->load('feedType', 'createdby'), 'Feed inventory created successfully', 201);
     }
 
     public function show(Request $request, $farm, PoultryFeedInventory $inventory)
@@ -76,6 +92,8 @@ class FeedInventoryController extends ApiController
         if ($inventory->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Feed inventory not found in this farm');
         }
+        // ensure feed type and creator are loaded
+        $inventory->load('feedType', 'createdby');
         return $this->sendResponse($inventory, 'Feed inventory retrieved successfully');
     }
 
@@ -102,6 +120,8 @@ class FeedInventoryController extends ApiController
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
         $inventory->update($request->all());
+        // reload relations
+        $inventory->load('feedType', 'createdby');
         return $this->sendResponse($inventory, 'Feed inventory updated successfully');
     }
 
@@ -130,11 +150,19 @@ class FeedInventoryController extends ApiController
             return $this->sendUnauthorizedError('Unauthorized to view feed inventories');
         }
         $query = PoultryFeedInventory::where('farm_id', $farm->id);
+        $byFeedType = $query->selectRaw('poultry_feed_type_id, sum(quantity) as total_quantity')
+            ->groupBy('poultry_feed_type_id')
+            ->get()
+            ->map(function ($row) {
+                $row->feed_type = PoultryFeedType::find($row->poultry_feed_type_id);
+                return $row;
+            });
+
         $statistics = [
             'total_feed_inventories' => $query->count(),
             'total_quantity' => $query->sum('quantity'),
-            'by_feed_type' => $query->selectRaw('poultry_feed_type_id, sum(quantity) as total_quantity')->groupBy('poultry_feed_type_id')->get(),
+            'by_feed_type' => $byFeedType,
         ];
         return $this->sendResponse($statistics, 'Feed inventory statistics retrieved successfully');
     }
-} 
+}

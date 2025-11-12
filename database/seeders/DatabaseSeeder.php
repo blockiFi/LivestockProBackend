@@ -49,6 +49,7 @@ class DatabaseSeeder extends Seeder
 
             // 4. Inventory Lookups
             PoultryFeedTypeSeeder::class,
+            PoultryFeedProductSeeder::class,
             AdministrationMethodSeeder::class,
             PoultryVaccineSeeder::class,
             PoultryVaccineProductSeeder::class,

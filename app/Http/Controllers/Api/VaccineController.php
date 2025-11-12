@@ -113,7 +113,6 @@ class VaccineController extends ApiController
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'description' => 'required|string',
-            'type' => ['required', Rule::in(['default', 'custom'])],
             'administration_age' => 'required|integer|min:1',
         ]);
 
@@ -121,7 +120,9 @@ class VaccineController extends ApiController
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
 
-        $vaccine = $farm->vaccines()->create($request->all());
+        $vaccine = $farm->vaccines()->create($request->all() + [
+            'type' => 'user',
+        ]);
 
         return $this->sendResponse($vaccine, 'Vaccine created successfully', 201);
     }

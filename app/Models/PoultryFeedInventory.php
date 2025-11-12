@@ -18,6 +18,7 @@ class PoultryFeedInventory extends Model
         'manufacturer',
         'manufacture_date',
         'poultry_feed_type_id',
+        'poultry_feed_product_id',
         'created_by',
         'status'
     ];
@@ -30,6 +31,11 @@ class PoultryFeedInventory extends Model
     public function feedType(): BelongsTo
     {
         return $this->belongsTo(PoultryFeedType::class, 'poultry_feed_type_id');
+    }
+
+    public function feedProduct(): BelongsTo
+    {
+        return $this->belongsTo(PoultryFeedProduct::class, 'poultry_feed_product_id');
     }
 
     public function feedUsages(): HasMany

@@ -148,14 +148,15 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Permission Management Routes
     Route::prefix('permissions')->group(function () {
-
         Route::get('/{farm}', [PermissionController::class, 'index']);
+        Route::get('/group/{farm}', [PermissionController::class, 'getGroupPermissions']);
         Route::get('/mypermissions/{farm}', [PermissionController::class, 'getMyFarmPermissions']);
         Route::get('/roles/{farm}', [PermissionController::class, 'getRoles']);
         Route::post('/roles', [PermissionController::class, 'createRole']);
         Route::put('/roles/{id}', [PermissionController::class, 'updateRole']);
         Route::delete('/roles/{id}', [PermissionController::class, 'deleteRole']);
         Route::post('/add-permissions-to-role', [PermissionController::class, 'addPermissionsToRole']);
+        Route::post('/remove-permission-from-role', [PermissionController::class, 'removePermissionFromRole']);
         
         // User Role Management
         Route::post('/assign-role', [PermissionController::class, 'assignRole']);
@@ -328,6 +329,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::apiResource('schedule-items', ScheduleItemController::class);
         Route::apiResource('batch-schedules', BatchScheduleController::class);
         Route::apiResource('batch-schedule-items', BatchScheduleItemController::class);
+    });
+
+    // Feed Product Routes
+    Route::prefix('farms/{farm}/feed-products')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Api\PoultryFeedProductController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\Api\PoultryFeedProductController::class, 'store']);
+        Route::get('/statistics', [\App\Http\Controllers\Api\PoultryFeedProductController::class, 'statistics']);
+        Route::get('/{product}', [\App\Http\Controllers\Api\PoultryFeedProductController::class, 'show']);
+        Route::put('/{product}', [\App\Http\Controllers\Api\PoultryFeedProductController::class, 'update']);
+        Route::delete('/{product}', [\App\Http\Controllers\Api\PoultryFeedProductController::class, 'destroy']);
     });
 
 });
