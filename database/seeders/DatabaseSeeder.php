@@ -56,7 +56,7 @@ class DatabaseSeeder extends Seeder
             PoultryMedicationSeeder::class,
             MedicationProductSeeder::class,
             // Ensure per-farm vaccine product permissions exist and are assigned to farm owners
-            VaccineProductPermissionSeeder::class,
+            // VaccineProductPermissionSeeder::class, // Temporarily disabled - needs fixing
 
             // 5. Inventory
             EnhancedInventorySeeder::class,
@@ -74,12 +74,16 @@ class DatabaseSeeder extends Seeder
             EnhancedSalesRecordSeeder::class,
 
             // 9. Scheduling
-            FeedingScheduleSeeder::class,
-            FeedingScheduleItemSeeder::class,
-            FeedingBatchScheduleSeeder::class,
-            FeedingBatchScheduleItemSeeder::class,
-            ScheduleSeeder::class,
-            ScheduleItemSeeder::class,
+            // Enhanced seeders with comprehensive schedule data
+            EnhancedScheduleSeeder::class,
+            EnhancedFeedingScheduleSeeder::class,
+            // Original seeders (can be commented out if using enhanced versions)
+            // FeedingScheduleSeeder::class,
+            // FeedingScheduleItemSeeder::class,
+            // FeedingBatchScheduleSeeder::class,
+            // FeedingBatchScheduleItemSeeder::class,
+            // ScheduleSeeder::class,
+            // ScheduleItemSeeder::class,
             BatchScheduleSeeder::class,
             BatchScheduleItemSeeder::class,
 

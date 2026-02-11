@@ -85,6 +85,14 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('flock_daily_records', function (Blueprint $table) {
+            // Drop foreign keys first
+            if (Schema::hasColumn('flock_daily_records', 'created_by')) {
+                $table->dropForeign(['created_by']);
+            }
+            if (Schema::hasColumn('flock_daily_records', 'updated_by')) {
+                $table->dropForeign(['updated_by']);
+            }
+            
             // Remove the added columns
             $columns = [
                 'record_date',

@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\FlockDailyRecordController;
 use App\Http\Controllers\Api\PoultryMedicationRecordController;
 use App\Http\Controllers\Api\PoultryVaccinationRecordController;
 use App\Http\Controllers\Api\AdministrationMethodController;
+use App\Http\Controllers\Api\InvoiceController;
 
 
 
@@ -339,6 +340,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{product}', [\App\Http\Controllers\Api\PoultryFeedProductController::class, 'show']);
         Route::put('/{product}', [\App\Http\Controllers\Api\PoultryFeedProductController::class, 'update']);
         Route::delete('/{product}', [\App\Http\Controllers\Api\PoultryFeedProductController::class, 'destroy']);
+    });
+
+    // Invoice Routes
+    Route::prefix('farms/{farm}/invoices')->group(function () {
+        Route::get('/', [InvoiceController::class, 'index']);
+        Route::get('/paginated', [InvoiceController::class, 'index'])->defaults('paginated', true);
+        Route::post('/', [InvoiceController::class, 'store']);
+        Route::get('/{invoice}', [InvoiceController::class, 'show']);
+        Route::put('/{invoice}', [InvoiceController::class, 'update']);
+        Route::delete('/{invoice}', [InvoiceController::class, 'destroy']);
     });
 
 });

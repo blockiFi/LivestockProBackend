@@ -39,7 +39,16 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('flock_daily_records', function (Blueprint $table) {
-            $table->dropColumn([
+            // Drop foreign keys first if they exist
+            if (Schema::hasColumn('flock_daily_records', 'created_by')) {
+                $table->dropForeign(['created_by']);
+            }
+            if (Schema::hasColumn('flock_daily_records', 'updated_by')) {
+                $table->dropForeign(['updated_by']);
+            }
+            
+            // Drop columns only if they exist
+            $columns = [
                 'record_date',
                 'age_days',
                 'total_birds',
@@ -55,7 +64,13 @@ return new class extends Migration
                 'additional_data',
                 'created_by',
                 'updated_by'
-            ]);
+            ];
+            
+            foreach ($columns as $column) {
+                if (Schema::hasColumn('flock_daily_records', $column)) {
+                    $table->dropColumn($column);
+                }
+            }
         });
     }
 };

@@ -40,6 +40,7 @@ class FeedingBatchScheduleItemController extends ApiController
             'actual_feeding_time.*.time' => 'required_with:actual_feeding_time|string',
             'actual_feeding_time.*.percentage' => 'required_with:actual_feeding_time|numeric|min:0|max:100',
             'actual_quantity' => 'nullable|numeric|min:0',
+            'feeding_date' => 'required|date',
             'status' => 'sometimes|in:scheduled,completed,missed,late',
         ]);
         if ($validator->fails()) {
@@ -50,6 +51,7 @@ class FeedingBatchScheduleItemController extends ApiController
             'feeding_schedule_item_id',
             'actual_feeding_time',
             'actual_quantity',
+            'feeding_date',
             'status',
         ]));
         return $this->sendResponse($item, 'Feeding batch schedule item created successfully', 201);
@@ -79,6 +81,7 @@ class FeedingBatchScheduleItemController extends ApiController
             'actual_feeding_time.*.time' => 'required_with:actual_feeding_time|string',
             'actual_feeding_time.*.percentage' => 'required_with:actual_feeding_time|numeric|min:0|max:100',
             'actual_quantity' => 'nullable|numeric|min:0',
+            'feeding_date' => 'sometimes|required|date',
             'status' => 'sometimes|in:scheduled,completed,missed,late',
         ]);
         if ($validator->fails()) {
@@ -89,6 +92,7 @@ class FeedingBatchScheduleItemController extends ApiController
             'feeding_schedule_item_id',
             'actual_feeding_time',
             'actual_quantity',
+            'feeding_date',
             'status',
         ]));
         return $this->sendResponse($item, 'Feeding batch schedule item updated successfully');

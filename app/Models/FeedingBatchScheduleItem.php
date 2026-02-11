@@ -11,6 +11,7 @@ class FeedingBatchScheduleItem extends Model
         'feeding_schedule_item_id',
         'actual_feeding_time',
         'actual_quantity',
+        'feeding_date',
         'status',
     ];
 

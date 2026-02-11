@@ -23,8 +23,8 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('flock_stages', function (Blueprint $table) {
-            // Add back the unique constraint
-            $table->unique('name');
+            // Don't add back the unique constraint - it was removed for a reason
+            // (to allow same stage names for different poultry types or contexts)
         });
     }
 };

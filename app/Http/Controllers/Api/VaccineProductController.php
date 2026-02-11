@@ -34,8 +34,8 @@ class VaccineProductController extends ApiController
         });
 
         // Apply filters
-        if ($request->has('vaccine_id')) {
-            $query->where('poultry_vaccine_id', $request->vaccine_id);
+        if ($request->has('poultry_vaccine_id')) {
+            $query->where('poultry_vaccine_id', $request->poultry_vaccine_id);
         }
 
         if ($request->has('type')) {
@@ -62,9 +62,17 @@ class VaccineProductController extends ApiController
         // Include relationships
         $query->with(['vaccine', 'administrationMethod']);
 
-        // Paginate results
-        $perPage = $request->input('per_page', 10);
-        $products = $query->paginate($perPage);
+        // Check if pagination is requested (properly handle string "false")
+        $paginated = filter_var($request->input('paginated', true), FILTER_VALIDATE_BOOLEAN);
+        
+        if ($paginated) {
+            // Paginate results
+            $perPage = $request->input('per_page', 10);
+            $products = $query->paginate($perPage);
+        } else {
+            // Return all results without pagination
+            $products = $query->get();
+        }
 
         return $this->sendResponse($products, 'Vaccine products retrieved successfully');
     }

@@ -67,7 +67,7 @@ class BatchScheduleController extends ApiController
         $schedule->update($request->only(['farm_id', 'flock_id', 'schedule_id', 'status']));
         return $this->sendResponse($schedule, 'Batch schedule updated successfully');
     }
-
+    
     public function destroy($id)
     {
         $schedule = BatchSchedule::findOrFail($id);

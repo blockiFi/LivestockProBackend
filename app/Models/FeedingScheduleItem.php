@@ -15,7 +15,7 @@ class FeedingScheduleItem extends Model
     ];
 
     protected $casts = [
-        'feeding_times' => 'array',
+        'feeding_times' => 'json',
     ];
 
     public function schedule()

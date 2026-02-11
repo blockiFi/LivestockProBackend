@@ -29,8 +29,8 @@ class MedicationProductController extends ApiController
               ->orWhereNull('farm_id');
         });
 
-        if ($request->has('medication_id')) {
-            $query->where('poultry_medication_id', $request->medication_id);
+        if ($request->has('poultry_medication_id')) {
+            $query->where('poultry_medication_id', $request->poultry_medication_id);
         }
         if ($request->has('type')) {
             $query->where('type', $request->type);
@@ -49,8 +49,19 @@ class MedicationProductController extends ApiController
         $sortDirection = $request->input('sort_direction', 'asc');
         $query->orderBy($sortField, $sortDirection);
         $query->with(['farm']);
-        $perPage = $request->input('per_page', 10);
-        $products = $query->paginate($perPage);
+        
+        // Check if pagination is requested (properly handle string "false")
+        $paginated = filter_var($request->input('paginated', false), FILTER_VALIDATE_BOOLEAN);
+        
+        if ($paginated) {
+            // Paginate results
+            $perPage = $request->input('per_page', 10);
+            $products = $query->paginate($perPage);
+        } else {
+            // Return all results without pagination
+            $products = $query->get();
+        }
+        
         return $this->sendResponse($products, 'Medication products retrieved successfully');
     }
 

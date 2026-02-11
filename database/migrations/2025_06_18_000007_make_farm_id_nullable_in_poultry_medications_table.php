@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -22,6 +23,9 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('poultry_medications', function (Blueprint $table) {
+            // Delete rows with NULL farm_id before making it NOT NULL
+            DB::table('poultry_medications')->whereNull('farm_id')->delete();
+            
             $table->foreignId('farm_id')->nullable(false)->change();
         });
     }
