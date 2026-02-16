@@ -24,8 +24,19 @@ class FeedingScheduleController extends ApiController
                   ->orWhereNull('farm_id'); // include default schedules
             });
         }
-        $perPage = request('per_page') ?? request('perPage') ?? 15;
-        $schedules = $query->paginate($perPage);
+
+        // Filter by poultry type if provided
+        if (request()->has('poultry_type_id')) {
+            $query->where('poultry_type_id', request('poultry_type_id'));
+        }
+
+        $shouldPaginate = filter_var(request('paginate', false), FILTER_VALIDATE_BOOLEAN);
+        if ($shouldPaginate) {
+            $perPage = request('per_page') ?? request('perPage') ?? 15;
+            $schedules = $query->paginate($perPage);
+        } else {
+            $schedules = $query->get();
+        }
         return $this->sendResponse($schedules, 'Feeding schedules retrieved successfully');
     }
 

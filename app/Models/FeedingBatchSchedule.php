@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class FeedingBatchSchedule extends Model
 {
     protected $fillable = [
+        'farm_id',
         'flock_id',
         'feeding_schedule_id',
         'status',

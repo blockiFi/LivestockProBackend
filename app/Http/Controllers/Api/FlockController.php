@@ -9,6 +9,7 @@ use App\Models\PoultryType;
 use App\Models\FlockStage;
 use App\Models\FlockDailyRecord;
 use App\Models\PoultryEvent;
+use App\Models\PoultryMortalityReport;
 use App\Traits\RegisterEvents;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -88,22 +89,25 @@ class FlockController extends ApiController
      */
     public function store(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'farm_id' => 'required|exists:farms,id',
-            'house_id' => 'required|exists:poultry_houses,id',
-            'poultry_type_id' => 'required|exists:poultry_types,id',
-            'flock_stage_id' => 'required|exists:flock_stages,id',
-            'batch_number' => 'string|max:255',
-            'name' => 'required|string|max:255',
-            'breed' => 'string|max:255',
-            'source' => 'string|max:255',
-            'quantity' => 'required|integer|min:1',
-            'arrival_date' => 'required|date',
-            'arrival_age_days' => 'required|integer|min:0',
-            'expected_end_date' => 'nullable|date|after:arrival_date',
-            'notes' => 'nullable|string'
-        ]);
 
+            $validator = Validator::make($request->all(), [
+                'farm_id' => 'required|exists:farms,id',
+                'house_id' => 'required|exists:poultry_houses,id',
+                'poultry_type_id' => 'required|exists:poultry_types,id',
+                'flock_stage_id' => 'required|exists:flock_stages,id',
+                // 'batch_number' => 'string|max:255', // Do not accept from frontend
+                'name' => 'required|string|max:255',
+                'breed' => 'string|max:255',
+                'source' => 'string|max:255',
+                'quantity' => 'required|integer|min:1',
+                'arrival_date' => 'required|date',
+                'arrival_age_days' => 'required|integer|min:0',
+                'expected_end_date' => 'nullable|date|after:arrival_date',
+                'notes' => 'nullable|string',
+                'medication_schedule_id' => 'nullable|exists:schedules,id',
+                'vaccination_schedule_id' => 'nullable|exists:schedules,id',
+                'feeding_schedule_id' => 'nullable|exists:feeding_schedules,id',
+            ]);
         if ($validator->fails()) {
             return $this->sendValidationError('Invalid flock data', $validator->errors()->all());
         }
@@ -154,7 +158,7 @@ class FlockController extends ApiController
                 'poultry_type_id' => $request->poultry_type_id,
                 'flock_stage_id' => $request->flock_stage_id,
                 'name' => $request->name,
-                'batch_number' => $request->batch_number,
+                // 'batch_number' => $request->batch_number, // Do not accept from frontend
                 'breed' => $request->breed,
                 'source' => $request->source,
                 'quantity' => $request->quantity,
@@ -179,6 +183,29 @@ class FlockController extends ApiController
                 $flock->id
             );
 
+                // Generate batch schedules if schedule IDs are provided
+                if ($request->medication_schedule_id) {
+                    \App\Models\BatchSchedule::create([
+                        'farm_id' => $request->farm_id,
+                        'flock_id' => $flock->id,
+                        'schedule_id' => $request->medication_schedule_id,
+                    ]);
+                }
+                if ($request->vaccination_schedule_id) {
+                    \App\Models\BatchSchedule::create([
+                        'farm_id' => $request->farm_id,
+                        'flock_id' => $flock->id,
+                        'schedule_id' => $request->vaccination_schedule_id,
+                    ]);
+                }
+                if ($request->feeding_schedule_id) {
+                    \App\Models\FeedingBatchSchedule::create([
+                        'farm_id' => $request->farm_id,
+                        'flock_id' => $flock->id,
+                        'feeding_schedule_id' => $request->feeding_schedule_id,
+                        'status' => 'scheduled',
+                    ]);
+                }
             DB::commit();
             // Verify batch number uniqueness
             $batchNumber = $flock->batch_number;
@@ -525,8 +552,51 @@ class FlockController extends ApiController
         return $days > 0 ? $weightGain / $days : 0;
     }
 
-    /**
-     * Update flock stage based on current age.
+    /**     * Get the actual flock quantity after subtracting total mortality and total culling.
+     */
+    public function getActualQuantity($farmId, $flockId)
+    {
+        $flock = Flock::where('id', $flockId)
+            ->where('farm_id', $farmId)
+            ->first();
+
+        if (!$flock) {
+            return $this->sendError('Flock not found in this farm', [], 404);
+        }
+
+        $farm = Farm::findOrFail($farmId);
+        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+
+        if (!auth()->user()->can('view flocks', 'api', $farm->id)) {
+            return $this->sendError('You do not have permission to view flocks', [], 403);
+        }
+
+        // Total mortality from mortality reports
+        $totalMortality = (int) PoultryMortalityReport::where('flock_id', $flockId)
+            ->where('farm_id', $farmId)
+            ->sum('mortality_count');
+
+        // Total culling from daily records
+        $totalCulling = (int) FlockDailyRecord::where('flock_id', $flockId)
+            ->where('farm_id', $farmId)
+            ->sum('culling_count');
+
+        $originalQuantity = $flock->quantity;
+        $actualQuantity = $originalQuantity - $totalMortality - $totalCulling;
+
+        // Ensure it doesn't go below 0
+        $actualQuantity = max(0, $actualQuantity);
+
+        return $this->sendResponse([
+            'flock_id' => (int) $flockId,
+            'original_quantity' => $originalQuantity,
+            'total_mortality' => $totalMortality,
+            'total_culling' => $totalCulling,
+            'actual_quantity' => $actualQuantity,
+        ], 'Actual flock quantity retrieved successfully');
+    }
+
+    /**     * Update flock stage based on current age.
      */
     private function updateFlockStage($flock)
     {

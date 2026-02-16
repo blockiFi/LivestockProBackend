@@ -92,6 +92,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/{flock}/timeline', [FlockController::class, 'getTimeline']);
             Route::put('/{flock}/status', [FlockController::class, 'updateStatus']);
             Route::get('/{flock}/performance', [FlockController::class, 'getPerformanceMetrics']);
+            Route::get('/{flock}/actual-quantity', [FlockController::class, 'getActualQuantity']);
         });
 
         // Poultry Type routes
@@ -305,10 +306,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('farms/{farm}/flock-mortality-reports')->group(function () {
         Route::get('/', [FlockMortalityReportController::class, 'index']);
         Route::post('/', [FlockMortalityReportController::class, 'store']);
+        Route::get('/by-flock-date', [FlockMortalityReportController::class, 'getMortalityByFlockAndDate']);
+        Route::get('/statistics', [FlockMortalityReportController::class, 'statistics']);
         Route::get('/{report}', [FlockMortalityReportController::class, 'show']);
         Route::put('/{report}', [FlockMortalityReportController::class, 'update']);
         Route::delete('/{report}', [FlockMortalityReportController::class, 'destroy']);
-        Route::get('/statistics', [FlockMortalityReportController::class, 'statistics']);
     });
 
     // Feeding schedule management
@@ -316,6 +318,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::apiResource('schedules', FeedingScheduleController::class);
         Route::apiResource('schedule-items', FeedingScheduleItemController::class);
         Route::apiResource('batch-schedules', FeedingBatchScheduleController::class);
+        Route::get('batch-schedules/flock/{flockId}/items-by-date', [FeedingBatchScheduleItemController::class, 'getByBatchAndDate']);
         Route::apiResource('batch-schedule-items', FeedingBatchScheduleItemController::class);
     });
 

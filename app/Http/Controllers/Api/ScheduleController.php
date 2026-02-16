@@ -27,9 +27,15 @@ class ScheduleController extends ApiController
                     $query->orWhere('farm_id', $farmId);
                 }
             });
-            
-        $perPage = request('per_page') ?? request('perPage') ?? 5;
-        if ($paginated || request()->has('page') || request()->has('per_page') || request()->has('perPage')) {
+
+        // Filter by poultry type if provided
+        if (request()->has('poultry_type_id')) {
+            $query->where('poultry_type_id', request('poultry_type_id'));
+        }
+
+        $shouldPaginate = filter_var(request('paginate', false), FILTER_VALIDATE_BOOLEAN);
+        if ($paginated || $shouldPaginate) {
+            $perPage = request('per_page') ?? request('perPage') ?? 5;
             $schedules = $query->paginate($perPage);
         } else {
             $schedules = $query->get();

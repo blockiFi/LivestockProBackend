@@ -4,11 +4,15 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
+use App\Models\FeedingBatchSchedule;
+use App\Models\FeedingBatchScheduleItem;
+use App\Models\Flock;
 use App\Models\PoultryFeedUsage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
+use Carbon\Carbon;
 
 class FeedUsageController extends ApiController
 {
@@ -72,10 +76,20 @@ class FeedUsageController extends ApiController
             $feedInventory->updateStatusBasedOnQuantity();
             
             // Create the usage record
-            return PoultryFeedUsage::create(array_merge($request->all(), [
+            $usage = PoultryFeedUsage::create(array_merge($request->all(), [
                 'farm_id' => $farm->id,
                 'created_by' => auth()->id()
             ]));
+
+            // Auto-sync feeding batch schedule item for this flock
+            $this->syncBatchScheduleItem(
+                $request->flock_id,
+                $request->poultry_feed_type_id,
+                $request->quantity,
+                $request->usage_date
+            );
+
+            return $usage;
         });
 
         return $this->sendResponse($usage, 'Feed usage created successfully', 201);
@@ -195,5 +209,86 @@ class FeedUsageController extends ApiController
             'by_feed_type' => $query->selectRaw('poultry_feed_type_id, sum(quantity) as total_quantity')->groupBy('poultry_feed_type_id')->get(),
         ];
         return $this->sendResponse($statistics, 'Feed usage statistics retrieved successfully');
+    }
+
+    /**
+     * Auto-create or update a FeedingBatchScheduleItem when feed usage is recorded.
+     *
+     * Determines the feeding day from the flock's arrival date and age offset,
+     * finds the matching schedule item, then creates or updates the batch item.
+     */
+    protected function syncBatchScheduleItem($flockId, $feedTypeId, $quantity, $usageDate)
+    {
+        if (!$flockId || !$feedTypeId) {
+            return;
+        }
+
+        $flock = Flock::find($flockId);
+        if (!$flock) {
+            return;
+        }
+
+        // Find the feeding batch schedule for this flock
+        $batchSchedule = FeedingBatchSchedule::where('flock_id', $flockId)->first();
+        if (!$batchSchedule) {
+            return;
+        }
+
+        $schedule = $batchSchedule->schedule;
+        if (!$schedule || !$schedule->items) {
+            return;
+        }
+
+        // Determine the feeding day from flock dates
+        $arrivalDate = Carbon::parse($flock->arrival_date);
+        $recordDate = Carbon::parse($usageDate);
+        $arrivalAgeDays = $flock->arrival_age_days ?? 0;
+        $daysSinceArrival = $arrivalDate->diffInDays($recordDate);
+        $feedingDay = $arrivalAgeDays + $daysSinceArrival + 1;
+
+        // Find the schedule item matching this feed type and feeding day
+        $scheduleItem = $schedule->items
+            ->where('feed_type_id', $feedTypeId)
+            ->where('feeding_day', $feedingDay)
+            ->first();
+
+        // If no exact day match, try just the feed type (for flexible schedules)
+        if (!$scheduleItem) {
+            $scheduleItem = $schedule->items
+                ->where('feed_type_id', $feedTypeId)
+                ->first();
+        }
+
+        if (!$scheduleItem) {
+            return;
+        }
+
+        // Calculate per-bird quantity (grams) from total usage (kg)
+        $flockQuantity = $flock->actual_quantity ?? $flock->quantity ?? 1;
+        $perBirdQuantity = $flockQuantity > 0 ? ($quantity * 1000) / $flockQuantity : $quantity;
+
+        // Check if a batch schedule item already exists for this date
+        $existingItem = FeedingBatchScheduleItem::where('feeding_batch_schedule_id', $batchSchedule->id)
+            ->whereDate('feeding_date', $usageDate)
+            ->where('feeding_schedule_item_id', $scheduleItem->id)
+            ->first();
+
+        if ($existingItem) {
+            // Update the existing item with the new actual quantity
+            $existingItem->update([
+                'actual_quantity' => round($perBirdQuantity, 2),
+                'status' => 'completed',
+            ]);
+        } else {
+            // Create a new batch schedule item
+            FeedingBatchScheduleItem::create([
+                'feeding_batch_schedule_id' => $batchSchedule->id,
+                'feeding_schedule_item_id' => $scheduleItem->id,
+                'actual_feeding_time' => $scheduleItem->feeding_times,
+                'actual_quantity' => round($perBirdQuantity, 2),
+                'feeding_date' => $usageDate,
+                'status' => 'completed',
+            ]);
+        }
     }
 } 

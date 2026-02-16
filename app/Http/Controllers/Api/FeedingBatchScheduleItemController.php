@@ -4,11 +4,15 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\FeedingBatchScheduleItem;
+use App\Models\PoultryFeedInventory;
+use App\Models\PoultryFeedUsage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
 class FeedingBatchScheduleItemController extends ApiController
 {
+
     public function index()
     {
         $feedingBatchScheduleId = request('feeding_batch_schedule_id');
@@ -46,14 +50,64 @@ class FeedingBatchScheduleItemController extends ApiController
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
-        $item = FeedingBatchScheduleItem::create($request->only([
-            'feeding_batch_schedule_id',
-            'feeding_schedule_item_id',
-            'actual_feeding_time',
-            'actual_quantity',
-            'feeding_date',
-            'status',
-        ]));
+
+        $item = DB::transaction(function () use ($request, $farmId, $flock) {
+            $item = FeedingBatchScheduleItem::create($request->only([
+                'feeding_batch_schedule_id',
+                'feeding_schedule_item_id',
+                'actual_feeding_time',
+                'actual_quantity',
+                'feeding_date',
+                'status',
+            ]));
+
+            // Update feed inventory if actual_quantity is provided and farm is known
+            $quantityUsed = $request->actual_quantity;
+            if ($quantityUsed && $quantityUsed > 0 && $farmId) {
+                // Get the feed type from the schedule item
+                $scheduleItem = \App\Models\FeedingScheduleItem::find($request->feeding_schedule_item_id);
+                $feedTypeId = $scheduleItem ? $scheduleItem->feed_type_id : null;
+
+                if ($feedTypeId) {
+                    // Find an available inventory for this feed type and farm (FIFO - oldest first)
+                    $inventory = PoultryFeedInventory::where('farm_id', $farmId)
+                        ->where('poultry_feed_type_id', $feedTypeId)
+                        ->where('quantity', '>', 0)
+                        ->whereIn('status', ['available', 'in_use'])
+                        ->orderBy('created_at', 'asc')
+                        ->first();
+
+                    if ($inventory) {
+                        // Deduct from inventory (don't go below zero)
+                        $deductAmount = min($quantityUsed, $inventory->quantity);
+                        $inventory->decrement('quantity', $deductAmount);
+                        $inventory->refresh();
+                        $inventory->updateStatusBasedOnQuantity();
+
+                        // Log the feed usage
+                        PoultryFeedUsage::create([
+                            'farm_id' => $farmId,
+                            'poultry_feed_inventory_id' => $inventory->id,
+                            'poultry_feed_type_id' => $feedTypeId,
+                            'flock_id' => $flock ? $flock->id : null,
+                            'quantity' => $deductAmount,
+                            'unit_cost' => $inventory->unit_cost ?? 0,
+                            'usage_date' => $request->feeding_date,
+                            'created_by' => auth()->id(),
+                        ]);
+
+                        $item->inventory_note = $deductAmount < $quantityUsed
+                            ? "Partial inventory deducted: {$deductAmount} of {$quantityUsed}. Insufficient stock."
+                            : null;
+                    } else {
+                        $item->inventory_note = "No available inventory found for this feed type.";
+                    }
+                }
+            }
+
+            return $item;
+        });
+
         return $this->sendResponse($item, 'Feeding batch schedule item created successfully', 201);
     }
 
@@ -107,5 +161,42 @@ class FeedingBatchScheduleItemController extends ApiController
         }
         $item->delete();
         return $this->sendResponse(null, 'Feeding batch schedule item deleted successfully');
+    }
+
+    /**
+     * Get a feeding batch schedule item for a specific flock (batch) on a specific date.
+     */
+    public function getByBatchAndDate(Request $request, $farm, $flockId)
+    {
+        $validator = Validator::make($request->all(), [
+            'date' => 'required|date',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $flock = \App\Models\Flock::find($flockId);
+
+        if (!$flock) {
+            return $this->sendError('Flock not found', [], 404);
+        }
+
+        if (!auth()->user()->can('view feeding batch schedule items', 'api', $flock->farm_id)) {
+            return $this->sendUnauthorizedError('You do not have permission to view feeding batch schedule items');
+        }
+
+        $batchSchedule = \App\Models\FeedingBatchSchedule::where('flock_id', $flockId)->first();
+
+        if (!$batchSchedule) {
+            return $this->sendResponse(null, 'No feeding batch schedule found for this flock');
+        }
+
+        $item = FeedingBatchScheduleItem::with(['batchSchedule', 'scheduleItem'])
+            ->where('feeding_batch_schedule_id', $batchSchedule->id)
+            ->whereDate('feeding_date', $request->date)
+            ->first();
+
+        return $this->sendResponse($item, 'Feeding batch schedule item retrieved successfully');
     }
 } 

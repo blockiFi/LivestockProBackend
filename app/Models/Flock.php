@@ -21,6 +21,9 @@ use App\Models\PoultryMedicationRecord;
 class Flock extends Model
 {
     use HasFactory;
+
+    protected $appends = ['actual_quantity'];
+
     protected $fillable = [
         'name',
         'batch_number',
@@ -37,6 +40,17 @@ class Flock extends Model
         'poultry_type_id',
         'flock_stage_id'
     ];
+
+    /**
+     * Get the actual flock quantity after subtracting total mortality and culling.
+     */
+    public function getActualQuantityAttribute(): int
+    {
+        $totalMortality = (int) $this->mortalityReports()->sum('mortality_count');
+        $totalCulling = (int) $this->dailyRecords()->sum('culling_count');
+
+        return max(0, $this->quantity - $totalMortality - $totalCulling);
+    }
 
     public function farm(): BelongsTo
     {

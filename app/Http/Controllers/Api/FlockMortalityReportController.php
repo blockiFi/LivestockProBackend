@@ -144,4 +144,38 @@ class FlockMortalityReportController extends ApiController
         ];
         return $this->sendResponse($statistics, 'Flock mortality report statistics retrieved successfully');
     }
+
+    /**
+     * Get the total mortality count for a specific flock on a specific date.
+     */
+    public function getMortalityByFlockAndDate(Request $request, $farm)
+    {
+        $user = $request->user();
+        $farm = Farm::findOrFail($farm);
+        if (!$user->hasPermissionTo('view flock mortality reports', 'api', $farm)) {
+            return $this->sendUnauthorizedError('Unauthorized to view flock mortality reports');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'flock_id' => 'required|exists:flocks,id',
+            'date' => 'required|date',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $reports = PoultryMortalityReport::where('farm_id', $farm->id)
+            ->where('flock_id', $request->flock_id)
+            ->whereDate('date', $request->date)
+            ->get();
+
+        $totalMortality = $reports->sum('mortality_count');
+        $reportCount = $reports->count();
+
+        return $this->sendResponse([
+            'total_mortality' => $totalMortality,
+            'report_count' => $reportCount,
+        ], 'Mortality data retrieved successfully');
+    }
 } 
