@@ -11,9 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('permissions', function (Blueprint $table) {
-            $table->foreignId('group_id')->nullable()->after('guard_name')->constrained('groups')->onDelete('set null');
-        });
+        if (Schema::hasTable('permissions') && !Schema::hasColumn('permissions', 'group_id')) {
+            Schema::table('permissions', function (Blueprint $table) {
+                $table->foreignId('group_id')->nullable()->after('guard_name')->constrained('groups')->onDelete('set null');
+            });
+        }
     }
 
     /**
