@@ -16,24 +16,37 @@ class CheckFarmMembership
      */
     public function handle(Request $request, Closure $next): Response
     {
-       
-        $farmId = $request->route('farm');
-        if (!$farmId && $request->has('farm_id')) {
-            $farmId = $request->farm_id;
-        }
+        // Support both numeric ID and implicit route-model binding for {farm}
+        $routeFarm = $request->route('farm');
 
-        if (!$farmId) {
-            return response()->json([
-                'message' => 'Farm ID is required'
-            ], 400);
-        }
+        if ($routeFarm instanceof Farm) {
+            $farm = $routeFarm;
+            $farmId = $farm->id;
+        } else {
+            $farmId = $routeFarm;
+            if (!$farmId && $request->has('farm_id')) {
+                $farmId = $request->farm_id;
+            }
 
-        $farm = Farm::find($farmId);
+            if (!$farmId) {
+                return response()->json([
+                    'message' => 'Farm ID is required'
+                ], 400);
+            }
+
+            $farm = Farm::find($farmId);
+        }
 
         if (!$farm) {
             return response()->json([
                 'message' => 'Farm not found'
             ], 404);
+        }
+
+        if (! $farm->status) {
+            return response()->json([
+                'message' => 'This farm has been suspended. Please contact support.'
+            ], 403);
         }
 
         app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);

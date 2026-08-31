@@ -3,15 +3,21 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\ApiController;
+use App\Http\Controllers\Api\Concerns\ChecksScheduleAccess;
 use App\Models\FeedingBatchScheduleItem;
-use App\Models\PoultryFeedInventory;
-use App\Models\PoultryFeedUsage;
+use App\Models\Flock;
+use App\Models\FeedingBatchSchedule;
+use App\Services\FeedingBatchScheduleItemService;
+use App\Services\FeedingDayService;
+use App\Services\FeedingMissedScheduleService;
+use App\Services\FeedingScheduleRangeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
 class FeedingBatchScheduleItemController extends ApiController
 {
+    use ChecksScheduleAccess;
 
     public function index()
     {
@@ -22,7 +28,7 @@ class FeedingBatchScheduleItemController extends ApiController
             $flock = $feedingBatchSchedule ? $feedingBatchSchedule->flock : null;
             $farmId = $flock ? $flock->farm_id : null;
         }
-        if ($farmId && !auth()->user()->can('view feeding batch schedule items', 'api', $farmId)) {
+        if ($farmId && !$this->canViewFarmSchedules(auth()->user(), $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to view feeding batch schedule items');
         }
         $items = FeedingBatchScheduleItem::with(['batchSchedule', 'scheduleItem'])->paginate(15);
@@ -34,7 +40,7 @@ class FeedingBatchScheduleItemController extends ApiController
         $feedingBatchSchedule = \App\Models\FeedingBatchSchedule::find($request->feeding_batch_schedule_id);
         $flock = $feedingBatchSchedule ? $feedingBatchSchedule->flock : null;
         $farmId = $flock ? $flock->farm_id : null;
-        if ($farmId && !auth()->user()->can('create feeding batch schedule items', 'api', $farmId)) {
+        if ($farmId && !$this->canCreateFarmSchedules(auth()->user(), $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to create feeding batch schedule items');
         }
         $validator = Validator::make($request->all(), [
@@ -51,62 +57,29 @@ class FeedingBatchScheduleItemController extends ApiController
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
 
-        $item = DB::transaction(function () use ($request, $farmId, $flock) {
-            $item = FeedingBatchScheduleItem::create($request->only([
-                'feeding_batch_schedule_id',
-                'feeding_schedule_item_id',
-                'actual_feeding_time',
-                'actual_quantity',
-                'feeding_date',
-                'status',
-            ]));
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
 
-            // Update feed inventory if actual_quantity is provided and farm is known
-            $quantityUsed = $request->actual_quantity;
-            if ($quantityUsed && $quantityUsed > 0 && $farmId) {
-                // Get the feed type from the schedule item
-                $scheduleItem = \App\Models\FeedingScheduleItem::find($request->feeding_schedule_item_id);
-                $feedTypeId = $scheduleItem ? $scheduleItem->feed_type_id : null;
+        $perBirdGrams = (float) ($request->actual_quantity ?? 0);
+        $headCount = $flock ? FeedingDayService::flockHeadCount($flock) : 1;
+        $feedKg = $perBirdGrams > 0 ? round(($perBirdGrams * $headCount) / 1000, 3) : null;
 
-                if ($feedTypeId) {
-                    // Find an available inventory for this feed type and farm (FIFO - oldest first)
-                    $inventory = PoultryFeedInventory::where('farm_id', $farmId)
-                        ->where('poultry_feed_type_id', $feedTypeId)
-                        ->where('quantity', '>', 0)
-                        ->whereIn('status', ['available', 'in_use'])
-                        ->orderBy('created_at', 'asc')
-                        ->first();
-
-                    if ($inventory) {
-                        // Deduct from inventory (don't go below zero)
-                        $deductAmount = min($quantityUsed, $inventory->quantity);
-                        $inventory->decrement('quantity', $deductAmount);
-                        $inventory->refresh();
-                        $inventory->updateStatusBasedOnQuantity();
-
-                        // Log the feed usage
-                        PoultryFeedUsage::create([
-                            'farm_id' => $farmId,
-                            'poultry_feed_inventory_id' => $inventory->id,
-                            'poultry_feed_type_id' => $feedTypeId,
-                            'flock_id' => $flock ? $flock->id : null,
-                            'quantity' => $deductAmount,
-                            'unit_cost' => $inventory->unit_cost ?? 0,
-                            'usage_date' => $request->feeding_date,
-                            'created_by' => auth()->id(),
-                        ]);
-
-                        $item->inventory_note = $deductAmount < $quantityUsed
-                            ? "Partial inventory deducted: {$deductAmount} of {$quantityUsed}. Insufficient stock."
-                            : null;
-                    } else {
-                        $item->inventory_note = "No available inventory found for this feed type.";
-                    }
-                }
-            }
-
-            return $item;
+        [$item, $inventoryWarning] = DB::transaction(function () use ($request, $farmId, $flock, $feedKg) {
+            return app(FeedingBatchScheduleItemService::class)->createWithInventory([
+                'feeding_batch_schedule_id' => $request->feeding_batch_schedule_id,
+                'feeding_schedule_item_id' => $request->feeding_schedule_item_id,
+                'actual_feeding_time' => $request->actual_feeding_time,
+                'actual_quantity' => $request->actual_quantity,
+                'actual_total_kg' => $feedKg,
+                'feeding_date' => $request->feeding_date,
+                'status' => $request->input('status', 'scheduled'),
+            ], $farmId, $flock);
         });
+
+        if ($inventoryWarning) {
+            $item->inventory_note = $inventoryWarning;
+        }
 
         return $this->sendResponse($item, 'Feeding batch schedule item created successfully', 201);
     }
@@ -115,7 +88,7 @@ class FeedingBatchScheduleItemController extends ApiController
     {
         $item = FeedingBatchScheduleItem::with(['batchSchedule', 'scheduleItem'])->findOrFail($id);
         $farmId = $item->batchSchedule && $item->batchSchedule->flock ? $item->batchSchedule->flock->farm_id : null;
-        if ($farmId && !auth()->user()->can('view feeding batch schedule items', 'api', $farmId)) {
+        if ($farmId && !$this->canViewFarmSchedules(auth()->user(), $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to view this feeding batch schedule item');
         }
         return $this->sendResponse($item, 'Feeding batch schedule item retrieved successfully');
@@ -125,9 +98,15 @@ class FeedingBatchScheduleItemController extends ApiController
     {
         $item = FeedingBatchScheduleItem::findOrFail($id);
         $farmId = $item->batchSchedule && $item->batchSchedule->flock ? $item->batchSchedule->flock->farm_id : null;
-        if ($farmId && !auth()->user()->can('update feeding batch schedule items', 'api', $farmId)) {
+        if ($farmId && !$this->canUpdateFarmSchedules(auth()->user(), $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to update this feeding batch schedule item');
         }
+
+        $flock = $item->batchSchedule?->flock;
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         $validator = Validator::make($request->all(), [
             'feeding_batch_schedule_id' => 'sometimes|required|exists:feeding_batch_schedules,id',
             'feeding_schedule_item_id' => 'sometimes|required|exists:feeding_schedule_items,id',
@@ -156,9 +135,15 @@ class FeedingBatchScheduleItemController extends ApiController
     {
         $item = FeedingBatchScheduleItem::findOrFail($id);
         $farmId = $item->batchSchedule && $item->batchSchedule->flock ? $item->batchSchedule->flock->farm_id : null;
-        if ($farmId && !auth()->user()->can('delete feeding batch schedule items', 'api', $farmId)) {
+        if ($farmId && !$this->canDeleteFarmSchedules(auth()->user(), $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to delete this feeding batch schedule item');
         }
+
+        $flock = $item->batchSchedule?->flock;
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         $item->delete();
         return $this->sendResponse(null, 'Feeding batch schedule item deleted successfully');
     }
@@ -182,7 +167,7 @@ class FeedingBatchScheduleItemController extends ApiController
             return $this->sendError('Flock not found', [], 404);
         }
 
-        if (!auth()->user()->can('view feeding batch schedule items', 'api', $flock->farm_id)) {
+        if (!$this->canViewFarmSchedules(auth()->user(), $flock->farm_id)) {
             return $this->sendUnauthorizedError('You do not have permission to view feeding batch schedule items');
         }
 
@@ -197,6 +182,190 @@ class FeedingBatchScheduleItemController extends ApiController
             ->whereDate('feeding_date', $request->date)
             ->first();
 
-        return $this->sendResponse($item, 'Feeding batch schedule item retrieved successfully');
+        if ($item) {
+            return $this->sendResponse($item, 'Feeding batch schedule item retrieved successfully');
+        }
+
+        $batchSchedule->load('schedule.items');
+        $feedingDay = FeedingDayService::feedingDayForDate($flock, $request->date);
+        $scheduleItem = app(FeedingScheduleRangeService::class)
+            ->resolveForDay($batchSchedule->schedule, $feedingDay);
+
+        if (!$scheduleItem) {
+            return $this->sendResponse(null, 'No feeding batch schedule item found for this date');
+        }
+
+        return $this->sendResponse([
+            'id' => null,
+            'feeding_batch_schedule_id' => $batchSchedule->id,
+            'feeding_schedule_item_id' => $scheduleItem->id,
+            'feeding_date' => $request->date,
+            'actual_quantity' => null,
+            'planned_quantity' => $scheduleItem->quantity,
+            'feeding_day' => $feedingDay,
+            'start_day' => $scheduleItem->start_day,
+            'end_day' => $scheduleItem->end_day,
+            'is_planned' => true,
+            'schedule_item' => $scheduleItem,
+        ], 'Planned feeding schedule item retrieved successfully');
+    }
+
+    /**
+     * Preview missed feeding days for a batch schedule.
+     */
+    public function missedDays(Request $request, $farm, $batchId)
+    {
+        $batch = $this->resolveBatchForFarm($farm, $batchId);
+        if ($batch instanceof \Illuminate\Http\JsonResponse) {
+            return $batch;
+        }
+
+        $flock = $batch->flock;
+        if (!$this->canViewFarmSchedules(auth()->user(), $flock->farm_id)) {
+            return $this->sendUnauthorizedError('You do not have permission to view feeding batch schedule items');
+        }
+
+        $options = $request->only(['from_day', 'through_day']);
+        $result = app(FeedingMissedScheduleService::class)->listMissedDays($batch, $flock, $options);
+
+        return $this->sendResponse($result, 'Missed feeding days retrieved successfully');
+    }
+
+    /**
+     * Bulk-implement all missed feeding days for a batch schedule.
+     */
+    public function implementMissed(Request $request, $farm, $batchId)
+    {
+        $batch = $this->resolveBatchForFarm($farm, $batchId);
+        if ($batch instanceof \Illuminate\Http\JsonResponse) {
+            return $batch;
+        }
+
+        $flock = $batch->flock;
+        if (!$this->canCreateFarmSchedules(auth()->user(), $flock->farm_id)) {
+            return $this->sendUnauthorizedError('You do not have permission to create feeding batch schedule items');
+        }
+
+        if ($response = $this->ensureFlockIsActive($flock)) {
+            return $response;
+        }
+
+        $validator = Validator::make($request->all(), [
+            'from_day' => 'sometimes|integer|min:1',
+            'through_day' => 'sometimes|integer|min:1',
+            'status' => 'sometimes|in:scheduled,completed,missed,late',
+            'inventory_by_feed_type' => 'sometimes|array',
+            'inventory_by_feed_type.*' => 'integer|exists:poultry_feed_inventories,id',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        try {
+            $result = app(FeedingMissedScheduleService::class)->implementMissed(
+                $batch,
+                $flock,
+                $request->only(['from_day', 'through_day', 'status', 'inventory_by_feed_type'])
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->sendValidationError($e->getMessage(), ['inventory_by_feed_type' => [$e->getMessage()]]);
+        }
+
+        return $this->sendResponse(
+            $result,
+            $result['created_count'] > 0
+                ? "Implemented {$result['created_count']} missed feeding day(s) successfully"
+                : 'No missed feeding days to implement',
+            $result['created_count'] > 0 ? 201 : 200
+        );
+    }
+
+    /**
+     * Preview late backfill records that can be reverted.
+     */
+    public function revertibleDays(Request $request, $farm, $batchId)
+    {
+        $batch = $this->resolveBatchForFarm($farm, $batchId);
+        if ($batch instanceof \Illuminate\Http\JsonResponse) {
+            return $batch;
+        }
+
+        $flock = $batch->flock;
+        if (!$this->canViewFarmSchedules(auth()->user(), $flock->farm_id)) {
+            return $this->sendUnauthorizedError('You do not have permission to view feeding batch schedule items');
+        }
+
+        $result = app(FeedingMissedScheduleService::class)->listRevertibleDays(
+            $batch,
+            $flock,
+            $request->only(['from_day', 'through_day'])
+        );
+
+        return $this->sendResponse($result, 'Revertible feeding days retrieved successfully');
+    }
+
+    /**
+     * Revert bulk backfilled late feeding records and restore inventory.
+     */
+    public function revertMissed(Request $request, $farm, $batchId)
+    {
+        $batch = $this->resolveBatchForFarm($farm, $batchId);
+        if ($batch instanceof \Illuminate\Http\JsonResponse) {
+            return $batch;
+        }
+
+        $flock = $batch->flock;
+        if (!$this->canCreateFarmSchedules(auth()->user(), $flock->farm_id)) {
+            return $this->sendUnauthorizedError('You do not have permission to revert feeding batch schedule items');
+        }
+
+        if ($response = $this->ensureFlockIsActive($flock)) {
+            return $response;
+        }
+
+        $validator = Validator::make($request->all(), [
+            'from_day' => 'sometimes|integer|min:1',
+            'through_day' => 'sometimes|integer|min:1',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $result = app(FeedingMissedScheduleService::class)->revertMissed(
+            $batch,
+            $flock,
+            $request->only(['from_day', 'through_day'])
+        );
+
+        return $this->sendResponse(
+            $result,
+            $result['reverted_count'] > 0
+                ? "Reverted {$result['reverted_count']} late feeding backfill(s) successfully"
+                : 'No late backfills to revert'
+        );
+    }
+
+    /**
+     * @return FeedingBatchSchedule|\Illuminate\Http\JsonResponse
+     */
+    private function resolveBatchForFarm($farmId, $batchId)
+    {
+        $batch = FeedingBatchSchedule::with(['flock', 'schedule.items'])->find($batchId);
+
+        if (!$batch) {
+            return $this->sendError('Feeding batch schedule not found', [], 404);
+        }
+
+        if ((int) $batch->farm_id !== (int) $farmId) {
+            return $this->sendError('Feeding batch schedule does not belong to this farm', [], 404);
+        }
+
+        if (!$batch->flock) {
+            return $this->sendError('Flock not found for this batch schedule', [], 404);
+        }
+
+        return $batch;
     }
 } 

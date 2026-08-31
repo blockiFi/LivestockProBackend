@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Models\PoultryMedicationRecord;
 use App\Models\PoultryMedicationInventory;
 use App\Models\Farm;
+use App\Models\Flock;
+use App\Models\FlockExpenditure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +41,11 @@ class PoultryMedicationRecordController extends ApiController
         // Check if user has permission to create medication records for this farm
         if (!auth()->user()->can('create medication records', 'api', $farm->id)) {
             return $this->sendError('You do not have permission to create medication records for this farm', [], 403);
+        }
+
+        [$flock, $inactiveResponse] = $this->activeFlockForFarm((int) $request->flock_id, $farm->id);
+        if ($inactiveResponse) {
+            return $inactiveResponse;
         }
 
         try {
@@ -77,6 +84,9 @@ class PoultryMedicationRecordController extends ApiController
             // Update inventory quantity by subtracting the used quantity
             $inventory->quantity -= $request->quantity;
             $inventory->updateStatus(); // This will save and update status automatically
+
+            // Auto-create flock expenditure record (if cost > 0)
+            FlockExpenditure::recordFromMedication($medicationRecord);
 
             // Load relationships
             $medicationRecord->load([
@@ -182,6 +192,11 @@ class PoultryMedicationRecordController extends ApiController
 
         $medicationRecord = PoultryMedicationRecord::where('farm_id', $farmId)->findOrFail($id);
 
+        $flock = Flock::find($medicationRecord->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         try {
             DB::beginTransaction();
 
@@ -208,6 +223,9 @@ class PoultryMedicationRecordController extends ApiController
             }
 
             $medicationRecord->update($updateData);
+
+            // Refresh expenditure record with latest cost (if any)
+            FlockExpenditure::recordFromMedication($medicationRecord);
 
             // Load relationships
             $medicationRecord->load([
@@ -239,6 +257,11 @@ class PoultryMedicationRecordController extends ApiController
 
         $medicationRecord = PoultryMedicationRecord::where('farm_id', $farmId)->findOrFail($id);
 
+        $flock = Flock::find($medicationRecord->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         try {
             DB::beginTransaction();
 
@@ -251,6 +274,9 @@ class PoultryMedicationRecordController extends ApiController
 
             // Delete the medication record
             $medicationRecord->delete();
+
+            // Remove linked expenditure (if any)
+            FlockExpenditure::deleteForSource('medication_record', $medicationRecord->id);
 
             DB::commit();
 

@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -29,8 +30,17 @@ class Farm extends Model
         'established_date',
         'size_hectares',
         'registration_number',
-        'created_by'
+        'tax_id',
+        'created_by',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'status' => 'boolean',
+            'established_date' => 'date',
+        ];
+    }
 
     public function vaccines(): HasMany
     {
@@ -58,6 +68,67 @@ class Farm extends Model
     public function country(): BelongsTo
     {
         return $this->belongsTo(Country::class);
+    }
+
+    public function settings(): HasOne
+    {
+        return $this->hasOne(FarmSetting::class);
+    }
+
+    public function subscription(): HasOne
+    {
+        return $this->hasOne(FarmSubscription::class);
+    }
+
+    public function subscriptionTransactions(): HasMany
+    {
+        return $this->hasMany(SubscriptionTransaction::class);
+    }
+
+    public function subscriptionWaivers(): HasMany
+    {
+        return $this->hasMany(SubscriptionWaiver::class);
+    }
+
+    public function settingsOrDefault(): FarmSetting
+    {
+        $settings = $this->settings()->firstOrCreate([]);
+
+        return $settings->fresh();
+    }
+
+    public function notificationSettings(): HasMany
+    {
+        return $this->hasMany(FarmNotificationSetting::class);
+    }
+
+    public function notificationConfig(): HasOne
+    {
+        return $this->hasOne(FarmNotificationConfig::class);
+    }
+
+    public function notificationConfigOrDefault(): FarmNotificationConfig
+    {
+        return $this->notificationConfig()->firstOrCreate([])->fresh();
+    }
+
+    public function equipment(): HasMany
+    {
+        return $this->hasMany(Equipment::class);
+    }
+
+    /**
+     * Timezone all farm scheduling and notification timestamps are rendered in.
+     */
+    public function resolveTimezone(): string
+    {
+        $timezone = $this->settings?->timezone;
+
+        if (!$timezone) {
+            $timezone = $this->settings()->value('timezone');
+        }
+
+        return $timezone ?: config('app.timezone', 'UTC');
     }
 
     public function customers(): HasMany

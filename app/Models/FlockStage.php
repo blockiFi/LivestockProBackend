@@ -12,7 +12,10 @@ class FlockStage extends Model
 
     protected $fillable = [
         'name',
-        'description'
+        'description',
+        'poultry_type_id',
+        'from_age',
+        'to_age',
     ];
 
     public function flocks(): HasMany

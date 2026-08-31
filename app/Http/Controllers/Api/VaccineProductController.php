@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\ApiController;
+use App\Exceptions\PermissionDoesNotExist;
 use App\Models\Farm;
 use App\Models\PoultryVaccine;
 use App\Models\PoultryVaccineProduct;
@@ -12,6 +13,21 @@ use Illuminate\Validation\Rule;
 
 class VaccineProductController extends ApiController
 {
+    private function canAny($user, Farm $farm, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            try {
+                if ($user->hasPermissionTo($permission, 'api', $farm)) {
+                    return true;
+                }
+            } catch (PermissionDoesNotExist) {
+                continue;
+            }
+        }
+
+        return false;
+    }
+
     /**
      * Display a listing of vaccine products.
      */
@@ -21,9 +37,11 @@ class VaccineProductController extends ApiController
         $farm = Farm::findOrFail($farm);
 
         // Check if user has permission to view vaccine products or broader inventory permissions
-        if (!($user->hasPermissionTo('view vaccine products', 'api', $farm)
-            || $user->hasPermissionTo('view vaccine inventory', 'api', $farm)
-            || $user->hasPermissionTo('view inventory', 'api', $farm))) {
+        if (! $this->canAny($user, $farm, [
+            'view vaccine products',
+            'view vaccine inventory',
+            'view inventory',
+        ])) {
              return $this->sendUnauthorizedError('Unauthorized to view vaccine products');
          }
 
@@ -60,7 +78,11 @@ class VaccineProductController extends ApiController
         $query->orderBy($sortField, $sortDirection);
 
         // Include relationships
-        $query->with(['vaccine', 'administrationMethod']);
+        $query->with([
+            'vaccine',
+            'administrationMethod',
+            'inventories' => fn ($q) => $q->where('farm_id', $farm->id),
+        ]);
 
         // Check if pagination is requested (properly handle string "false")
         $paginated = filter_var($request->input('paginated', true), FILTER_VALIDATE_BOOLEAN);
@@ -86,16 +108,23 @@ class VaccineProductController extends ApiController
         $farm = Farm::findOrFail($farm);
 
         // Check if user has permission to create vaccine products or broader inventory permissions
-        if (!($user->hasPermissionTo('create vaccine products', 'api', $farm)
-            || $user->hasPermissionTo('manage vaccine inventory', 'api', $farm)
-            || $user->hasPermissionTo('manage inventory', 'api', $farm)
-            || $user->hasPermissionTo('create vaccines', 'api', $farm))) {
+        if (! $this->canAny($user, $farm, [
+            'create vaccine products',
+            'manage vaccine inventory',
+            'manage inventory',
+            'create vaccines',
+        ])) {
              return $this->sendUnauthorizedError('Unauthorized to create vaccine products');
          }
 
         $validator = Validator::make($request->all(), [
             'poultry_vaccine_id' => 'required|exists:poultry_vaccines,id',
-            'name' => 'required|string|max:255|unique:poultry_vaccine_products,name',
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('poultry_vaccine_products', 'name')->where(fn ($q) => $q->where('farm_id', $farm->id)),
+            ],
             'manufacturer' => 'required|string|max:255',
             'administration_method_id' => 'required|exists:administration_methods,id',
             'withdrawal_period' => 'nullable|integer|min:0',
@@ -103,7 +132,8 @@ class VaccineProductController extends ApiController
             'dosage' => 'nullable|numeric|min:0',
             'dosage_unit' => 'nullable|string|max:50',
             'image_url' => 'nullable|url',
-            'type' => ['required', Rule::in(['default', 'user'])],
+            'min_stock_level' => 'nullable|integer|min:0',
+            'type' => ['nullable', Rule::in(['default', 'user'])],
         ]);
 
         if ($validator->fails()) {
@@ -116,11 +146,23 @@ class VaccineProductController extends ApiController
             return $this->sendError('Vaccine not found in this farm', [], 404);
         }
 
-        $product = PoultryVaccineProduct::create(array_merge($request->all(), [
-            'farm_id' => $farm->id
+        $product = PoultryVaccineProduct::create(array_merge($request->only([
+            'poultry_vaccine_id',
+            'name',
+            'manufacturer',
+            'administration_method_id',
+            'withdrawal_period',
+            'withdrawal_period_unit',
+            'dosage',
+            'dosage_unit',
+            'image_url',
+            'min_stock_level',
+        ]), [
+            'farm_id' => $farm->id,
+            'type' => $request->input('type', 'user'),
         ]));
 
-        $product->load(['vaccine', 'administrationMethod']);
+        $product->load(['vaccine', 'administrationMethod', 'inventories' => fn ($q) => $q->where('farm_id', $farm->id)]);
 
         return $this->sendResponse($product, 'Vaccine product created successfully', 201);
     }
@@ -134,9 +176,11 @@ class VaccineProductController extends ApiController
         $farm = Farm::findOrFail($farm);
 
         // Check if user has permission to view vaccine products or broader inventory permissions
-        if (!($user->hasPermissionTo('view vaccine products', 'api', $farm)
-            || $user->hasPermissionTo('view vaccine inventory', 'api', $farm)
-            || $user->hasPermissionTo('view inventory', 'api', $farm))) {
+        if (! $this->canAny($user, $farm, [
+            'view vaccine products',
+            'view vaccine inventory',
+            'view inventory',
+        ])) {
              return $this->sendUnauthorizedError('Unauthorized to view vaccine products');
          }
 
@@ -145,7 +189,11 @@ class VaccineProductController extends ApiController
             return $this->sendNotFoundError('Vaccine product not found in this farm');
         }
 
-        $product->load(['vaccine', 'administrationMethod']);
+        $product->load([
+            'vaccine',
+            'administrationMethod',
+            'inventories' => fn ($q) => $q->where('farm_id', $farm->id),
+        ]);
 
         return $this->sendResponse($product, 'Vaccine product retrieved successfully');
     }
@@ -159,9 +207,11 @@ class VaccineProductController extends ApiController
         $farm = Farm::findOrFail($farm);
 
         // Check if user has permission to update vaccine products or broader inventory permissions
-        if (!($user->hasPermissionTo('update vaccine products', 'api', $farm)
-            || $user->hasPermissionTo('manage vaccine inventory', 'api', $farm)
-            || $user->hasPermissionTo('manage inventory', 'api', $farm))) {
+        if (! $this->canAny($user, $farm, [
+            'update vaccine products',
+            'manage vaccine inventory',
+            'manage inventory',
+        ])) {
              return $this->sendUnauthorizedError('Unauthorized to update vaccine products');
          }
 
@@ -177,7 +227,15 @@ class VaccineProductController extends ApiController
 
         $validator = Validator::make($request->all(), [
             'poultry_vaccine_id' => 'sometimes|required|exists:poultry_vaccines,id',
-            'name' => ['sometimes', 'required', 'string', 'max:255', Rule::unique('poultry_vaccine_products')->ignore($product->id)],
+            'name' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('poultry_vaccine_products', 'name')
+                    ->ignore($product->id)
+                    ->where(fn ($q) => $q->where('farm_id', $farm->id)),
+            ],
             'manufacturer' => 'sometimes|required|string|max:255',
             'administration_method_id' => 'sometimes|required|exists:administration_methods,id',
             'withdrawal_period' => 'nullable|integer|min:0',
@@ -185,15 +243,30 @@ class VaccineProductController extends ApiController
             'dosage' => 'nullable|numeric|min:0',
             'dosage_unit' => 'nullable|string|max:50',
             'image_url' => 'nullable|url',
-            'type' => ['sometimes', 'required', Rule::in(['default', 'user'])],
+            'min_stock_level' => 'nullable|integer|min:0',
         ]);
 
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
 
-        $product->update($request->all());
-        $product->load(['vaccine', 'administrationMethod']);
+        $product->update($request->only([
+            'poultry_vaccine_id',
+            'name',
+            'manufacturer',
+            'administration_method_id',
+            'withdrawal_period',
+            'withdrawal_period_unit',
+            'dosage',
+            'dosage_unit',
+            'image_url',
+            'min_stock_level',
+        ]));
+        $product->load([
+            'vaccine',
+            'administrationMethod',
+            'inventories' => fn ($q) => $q->where('farm_id', $farm->id),
+        ]);
 
         return $this->sendResponse($product, 'Vaccine product updated successfully');
     }
@@ -207,9 +280,11 @@ class VaccineProductController extends ApiController
         $farm = Farm::findOrFail($farm);
 
         // Check if user has permission to delete vaccine products or broader inventory permissions
-        if (!($user->hasPermissionTo('delete vaccine products', 'api', $farm)
-            || $user->hasPermissionTo('manage vaccine inventory', 'api', $farm)
-            || $user->hasPermissionTo('manage inventory', 'api', $farm))) {
+        if (! $this->canAny($user, $farm, [
+            'delete vaccine products',
+            'manage vaccine inventory',
+            'manage inventory',
+        ])) {
              return $this->sendUnauthorizedError('Unauthorized to delete vaccine products');
          }
 
@@ -237,9 +312,11 @@ class VaccineProductController extends ApiController
         $farm = Farm::findOrFail($farm);
 
         // Check if user has permission to view vaccine products or broader inventory permissions
-        if (!($user->hasPermissionTo('view vaccine products', 'api', $farm)
-            || $user->hasPermissionTo('view vaccine inventory', 'api', $farm)
-            || $user->hasPermissionTo('view inventory', 'api', $farm))) {
+        if (! $this->canAny($user, $farm, [
+            'view vaccine products',
+            'view vaccine inventory',
+            'view inventory',
+        ])) {
              return $this->sendUnauthorizedError('Unauthorized to view vaccine products');
          }
 

@@ -5,6 +5,7 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -29,7 +30,10 @@ class User extends Authenticatable implements MustVerifyEmail
         'email',
         'password',
         'phone',
-        'profile_photo'
+        'profile_photo',
+        'is_platform_admin',
+        'platform_admin_role',
+        'last_admin_login_at',
     ];
 
     /**
@@ -52,6 +56,8 @@ class User extends Authenticatable implements MustVerifyEmail
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_platform_admin' => 'boolean',
+            'last_admin_login_at' => 'datetime',
         ];
     }
 
@@ -59,6 +65,60 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return $this->belongsToMany(Farm::class, 'farm_users');
     }
+
+    public function settings(): HasOne
+    {
+        return $this->hasOne(UserSetting::class);
+    }
+
+    public function settingsOrDefault(): UserSetting
+    {
+        $settings = $this->settings()->firstOrCreate([]);
+
+        return $settings->fresh();
+    }
+
+    /**
+     * In-app notifications from the central notification platform. Named
+     * distinctly from the Notifiable trait's `notifications()` relation.
+     */
+    public function appNotifications(): HasMany
+    {
+        return $this->hasMany(Notification::class);
+    }
+
+    public function notificationPreferences(): HasMany
+    {
+        return $this->hasMany(NotificationPreference::class);
+    }
+
+    public function notificationSettings(): HasOne
+    {
+        return $this->hasOne(UserNotificationSetting::class);
+    }
+
+    public function notificationSettingsOrDefault(): UserNotificationSetting
+    {
+        return $this->notificationSettings()->firstOrCreate([])->fresh();
+    }
+
+    /**
+     * Timezone used to render and schedule notifications for this user.
+     */
+    public function resolveTimezone(?Farm $farm = null): string
+    {
+        $userTimezone = $this->settings?->timezone;
+        if ($userTimezone && $userTimezone !== 'UTC') {
+            return $userTimezone;
+        }
+
+        if ($farm) {
+            return $farm->resolveTimezone();
+        }
+
+        return $userTimezone ?: config('app.timezone', 'UTC');
+    }
+
     public function accessibleFarms()
     {
         return Farm::whereHas('roles', function ($query) {

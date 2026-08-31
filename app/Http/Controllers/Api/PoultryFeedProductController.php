@@ -23,10 +23,15 @@ class PoultryFeedProductController extends ApiController
             return $this->sendUnauthorizedError('Unauthorized to view feed products');
         }
 
-        $products = PoultryFeedProduct::all();
+        $query = PoultryFeedProduct::with('feedType')->where(function($q) use ($farm) {
+            $q->where('farm_id', $farm->id)->orWhereNull('farm_id');
+        });
 
-        
+        if ($request->filled('poultry_feed_type_id')) {
+            $query->where('poultry_feed_type_id', $request->input('poultry_feed_type_id'));
+        }
 
+        $products = $query->orderBy('name')->get();
         return $this->sendResponse($products, 'Feed products retrieved successfully');
     }
 
@@ -65,6 +70,14 @@ class PoultryFeedProductController extends ApiController
             'poultry_feed_type_id' => 'nullable|exists:poultry_feed_types,id',
             'sku' => 'nullable|string|max:255',
             'description' => 'nullable|string',
+            'crude_protein' => 'nullable|numeric|min:0|max:100',
+            'crude_fat' => 'nullable|numeric|min:0|max:100',
+            'crude_fiber' => 'nullable|numeric|min:0|max:100',
+            'calcium' => 'nullable|numeric|min:0|max:100',
+            'phosphorus' => 'nullable|numeric|min:0|max:100',
+            'metabolizable_energy' => 'nullable|numeric|min:0',
+            'moisture' => 'nullable|numeric|min:0|max:100',
+            'ash' => 'nullable|numeric|min:0|max:100',
             'price' => 'nullable|numeric|min:0',
             'unit' => 'nullable|string|max:50',
             'type' => ['sometimes', Rule::in(['default', 'user'])],
@@ -102,6 +115,14 @@ class PoultryFeedProductController extends ApiController
             'poultry_feed_type_id' => 'nullable|exists:poultry_feed_types,id',
             'sku' => 'nullable|string|max:255',
             'description' => 'nullable|string',
+            'crude_protein' => 'nullable|numeric|min:0|max:100',
+            'crude_fat' => 'nullable|numeric|min:0|max:100',
+            'crude_fiber' => 'nullable|numeric|min:0|max:100',
+            'calcium' => 'nullable|numeric|min:0|max:100',
+            'phosphorus' => 'nullable|numeric|min:0|max:100',
+            'metabolizable_energy' => 'nullable|numeric|min:0',
+            'moisture' => 'nullable|numeric|min:0|max:100',
+            'ash' => 'nullable|numeric|min:0|max:100',
             'price' => 'nullable|numeric|min:0',
             'unit' => 'nullable|string|max:50',
             'type' => ['sometimes', Rule::in(['default', 'user'])],

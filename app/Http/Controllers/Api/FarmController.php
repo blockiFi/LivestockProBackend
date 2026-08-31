@@ -12,8 +12,10 @@ use Illuminate\Validation\Rule;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\Models\Permission;
 use App\Http\Controllers\Api\ApiController;
+use App\Services\FarmEntitlementService;
 use App\Traits\HasFarmPermissions;
 use App\Traits\RegisterEvents;
+use App\Traits\ManagesFarmRoles;
 
 use DB;
 use Spatie\Permission\PermissionRegistrar;
@@ -21,7 +23,7 @@ use Spatie\Permission\PermissionRegistrar;
 
 class FarmController extends ApiController
 {
-    use HasFarmPermissions , RegisterEvents;
+    use HasFarmPermissions, RegisterEvents, ManagesFarmRoles;
     /**
      * Get all farms for the authenticated user
      */
@@ -42,17 +44,17 @@ class FarmController extends ApiController
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'address' => 'required|string',
-            'phone' => 'required|string|max:20',
-            'email' => 'required|email|max:255',
             'country_id' => 'required|exists:countries,id',
             'state' => 'required|string|max:255',
             'city' => 'required|string|max:255',
-            'postal_code' => 'required|string|max:20',
+            'postal_code' => 'nullable|string|max:20',
+            'phone' => 'nullable|string|max:20',
+            'email' => 'nullable|email|max:255',
             'website' => 'nullable|url|max:255',
             'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-            'established_date' => 'required|date',
-            'size_hectares' => 'required|numeric|min:0',
-            'registration_number' => 'required|string|max:255|unique:farms',
+            'established_date' => 'nullable|date',
+            'size_hectares' => 'nullable|numeric|min:0',
+            'registration_number' => 'nullable|string|max:255|unique:farms,registration_number',
         ]);
 
         if ($validator->fails()) {
@@ -82,7 +84,10 @@ class FarmController extends ApiController
             ->first();
         app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
         auth()->user()->assignRole($ownerRole);
-        
+
+        // Start the farm on a trial so billing enforcement has something to read.
+        app(FarmEntitlementService::class)->subscription($farm);
+
         // Register the farm creation event
         $this->RegisterEvent(
             farmId: $farm->id,
@@ -362,8 +367,7 @@ class FarmController extends ApiController
 
         $statistics = [
             'total_poultry_houses' => (int) $farm->poultryHouses()->count(),
-            // 'total_flocks' => (int) $farm->flocks()->count(),
-            'total_flocks' => (int) $farm->flocks()->sum('quantity'),
+            'total_flocks' => (int) $farm->flocks()->count(),
             'total_customers' => (int) $farm->customers()->count(),
             'total_sales' => (float) $farm->salesRecords()->sum('total_price'),
             'active_schedules' => (int) $farm->batchSchedules()->where('status', 'active')->count(),
@@ -375,227 +379,7 @@ class FarmController extends ApiController
         return $this->sendResponse($statistics, 'Farm statistics retrieved successfully');
     }
 
-    private function getRolesAndPermissions()
-    {
-        return [
-            'owner' => [
-                'view farm', 'update farm', 'delete farm', 'manage users',
-                'view statistics', 'manage poultry houses','view flocks' , 'update flocks' , 'delete flock' , 'manage flocks',
-                'manage inventory', 'manage schedules', 'manage sales',
-                'view poultry types', 'manage poultry types',
-                'view flock stages', 'manage flock stages'
-            ],
-            'manager' => [
-                'view farm', 'update farm', 'manage users',
-                'view statistics', 'manage poultry houses','view flocks' , 'update flocks' ,  'manage flocks',
-                'manage inventory', 'manage schedules', 'manage sales',
-                'view poultry types', 'manage poultry types',
-                'view flock stages', 'manage flock stages'
-            ],
-            'worker' => [
-                'view farm', 'view statistics',
-                'manage poultry houses','view flocks' ,  'manage flocks',
-                'manage inventory', 'manage schedules',
-                'view poultry types',
-                'view flock stages'
-            ]
-        ];
-    }
-    /**
-     * Create farm-specific roles and permissions
-     */
-
-    /**
-     * Add a role and its permissions to a farm
-     * 
-     * @param Farm $farm The farm to add the role to
-     * @param string $roleName The name of the role to create
-     * @param array $permissions Array of permission names to assign to the role
-     * @return Role The created role
-     */
-    private function addFarmRole(Farm $farm, string $roleName, array $permissions)
-    {
-        // Create the role for this farm
-        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
-       $role = Role::firstOrCreate(
-            ['name' => $roleName, 'guard_name' => 'api', 'farm_id' => $farm->id]
-        );
-
-        // Create and assign each permission
-        foreach ($permissions as $permission) {
-           
-            $permissionModel = Permission::findOrCreate( $permission, 'api');
-        }
-
-        // Sync all permissions to the role
-        
-        $role->syncPermissions($permissions);
-
-        return $role;
-    }
-    private function createFarmRolesAndPermissions(Farm $farm)
-    {
-        // Define all permissions
-        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
-        $allPermissions = [
-            // Farm Management
-            'view farm',
-            'create farm',
-            'update farm',
-            'delete farm',
-            'manage farm settings',
-
-            // User Management
-            'view users',
-            'create users',
-            'update users',
-            'delete users',
-            'manage users',
-            'view user roles',
-            'manage user roles',
-            'view user permissions',
-            'manage user permissions',
-
-            // Role Management
-            'view roles',
-            'create roles',
-            'update roles',
-            'delete roles',
-            'manage roles',
-            'view permissions',
-            'manage permissions',
-
-            // Flock Management
-            'view flocks',
-            'create flocks',
-            'update flocks',
-            'delete flocks',
-            'manage flocks',
-
-            // Poultry House Management
-            'view poultry houses',
-            'create poultry houses',
-            'update poultry houses',
-            'delete poultry houses',
-            'manage poultry houses',
-
-            // Poultry Type Management
-            'view poultry types',
-            'create poultry types',
-            'update poultry types',
-            'delete poultry types',
-            'manage poultry types',
-
-            // Flock Stage Management
-            'view flock stages',
-            'create flock stages',
-            'update flock stages',
-            'delete flock stages',
-            'manage flock stages',
-
-            // Reports and Statistics
-            'view reports',
-            'generate reports',
-            'view statistics',
-            'export data',
-
-            // Inventory Management
-            'view inventory',
-            'manage inventory',
-            'view feed inventory',
-            'manage feed inventory',
-            'view medication inventory',
-            'manage medication inventory',
-            'view vaccine inventory',
-            'manage vaccine inventory',
-
-            // Schedule Management
-            'view schedules',
-            'create schedules',
-            'update schedules',
-            'delete schedules',
-            'manage schedules',
-
-            // Record Management
-            'view records',
-            'create records',
-            'update records',
-            'delete records',
-            'manage records',
-            'view mortality records',
-            'manage mortality records',
-            'view weight records',
-            'manage weight records',
-            'view egg records',
-            'manage egg records',
-
-            // Customer Management
-            'view customers',
-            'create customers',
-            'update customers',
-            'delete customers',
-            'manage customers',
-
-            // Sales Management
-            'view sales',
-            'create sales',
-            'update sales',
-            'delete sales',
-            'manage sales',
-        ];
-
-        // Create permissions for the farm
-        foreach ($allPermissions as $permission) {
-            Permission::findOrCreate($permission, 'api');
-        }
-
-        // Define role permissions
-        $rolePermissions = [
-            'owner' => $allPermissions, // Owner has all permissions
-            'manager' => array_filter($allPermissions, function($permission) {
-                // Managers can't manage users, roles, or permissions
-                return !in_array($permission, [
-                    'manage users',
-                    'manage user roles',
-                    'manage user permissions',
-                    'manage roles',
-                    'manage permissions',
-                    'delete farm'
-                ]);
-            }),
-            'worker' => array_filter($allPermissions, function($permission) {
-                // Workers have limited permissions
-                return in_array($permission, [
-                    'view farm',
-                    'view users',
-                    'view roles',
-                    'view permissions',
-                    'view flocks',
-                    'view poultry houses',
-                    'view poultry types',
-                    'view flock stages',
-                    'view reports',
-                    'view statistics',
-                    'view inventory',
-                    'view feed inventory',
-                    'view medication inventory',
-                    'view vaccine inventory',
-                    'view schedules',
-                    'view records',
-                    'view mortality records',
-                    'view weight records',
-                    'view egg records',
-                    'view customers',
-                    'view sales'
-                ]);
-            })
-        ];
-
-        // Create roles and assign permissions
-        foreach ($rolePermissions as $roleName => $permissions) {
-            $this->addFarmRole($farm, $roleName, $permissions);
-        }
-    }
+    // Role / permission helpers are provided by ManagesFarmRoles trait
 
     /**
      * Get all users for a specific farm with their roles and permissions

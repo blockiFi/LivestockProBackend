@@ -16,7 +16,15 @@ class PoultryFeedType extends Model
         'status',
         'farm_id',
         'created_by',
-        'min_stock_level'
+        'min_stock_level',
+        'start_age',
+        'end_age',
+    ];
+
+    protected $casts = [
+        'start_age' => 'integer',
+        'end_age' => 'integer',
+        'min_stock_level' => 'integer',
     ];
 
     public function inventories(): HasMany
@@ -29,14 +37,21 @@ class PoultryFeedType extends Model
         return $this->hasMany(PoultryFeedUsage::class);
     }
 
+    public function ageRanges(): HasMany
+    {
+        return $this->hasMany(FarmFeedTypeAgeRange::class, 'poultry_feed_type_id');
+    }
+
     public function farm(): BelongsTo
     {
         return $this->belongsTo(Farm::class);
     }
+
     public function poultryType(): BelongsTo
     {
         return $this->belongsTo(PoultryType::class);
     }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Tests\TestCase;
+use App\Models\Country;
 use App\Models\User;
 use App\Models\Farm;
 use App\Models\Flock;
@@ -41,8 +42,10 @@ class FlockTest extends TestCase
         $this->token = $this->user->createToken('test-token')->plainTextToken;
 
         // Create test farm
+        $country = Country::factory()->create();
         $this->farm = Farm::factory()->create([
-            'created_by' => $this->user->id
+            'created_by' => $this->user->id,
+            'country_id' => $country->id,
         ]);
 
         // Create permissions for the farm
@@ -70,8 +73,8 @@ class FlockTest extends TestCase
          // Give all permissions to owner role
          $ownerRole->givePermissionTo($permissions);
          
-         // Assign role with model_type
-         $this->user->roles()->attach($ownerRole->id, ['model_type' => User::class]);
+         $this->farm->users()->attach($this->user->id);
+         $this->user->assignRole($ownerRole);
 
         // Create test poultry type
         $this->poultryType = PoultryType::factory()->create();
@@ -431,6 +434,34 @@ class FlockTest extends TestCase
                 ],
                 'message'
             ]);
+    }
+
+    public function test_can_get_flock_metrics_ai_insights()
+    {
+        $flock = Flock::factory()->create([
+            'farm_id' => $this->farm->id,
+            'house_id' => $this->poultryHouse->id,
+            'poultry_type_id' => $this->poultryType->id,
+            'flock_stage_id' => $this->flockStage->id
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->getJson("/api/farms/{$this->farm->id}/flocks/{$flock->id}/metrics/ai-insights");
+
+        $response->assertStatus(200)
+            ->assertJsonStructure([
+                'success',
+                'data' => [
+                    'metrics_snapshot',
+                    'ai_insights',
+                    'ai_analysis',
+                    'ai_available',
+                ],
+                'message'
+            ]);
+
+        $this->assertIsBool($response->json('data.ai_available'));
+        $this->assertIsArray($response->json('data.metrics_snapshot'));
     }
 
     public function test_unauthorized_user_cannot_access_flocks()

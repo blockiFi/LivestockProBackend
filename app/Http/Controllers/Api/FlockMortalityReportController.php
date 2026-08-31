@@ -44,9 +44,9 @@ class FlockMortalityReportController extends ApiController
         $validator = Validator::make($request->all(), [
             'flock_id' => 'required|exists:flocks,id',
             'mortality_count' => 'required|integer|min:0',
-            'average_weight' => 'required|integer|min:0',
-            'bird_count' => 'required|integer|min:0',
-            'mortality_percentage' => 'required|numeric|min:0',
+            'average_weight' => 'required|numeric|min:0',
+            'bird_count' => 'nullable|integer|min:0',
+            'mortality_percentage' => 'nullable|numeric|min:0',
             'notes' => 'nullable|string',
             'date' => 'required|date',
         ]);
@@ -56,12 +56,38 @@ class FlockMortalityReportController extends ApiController
         
         // Get the flock and its poultry type
         $flock = \App\Models\Flock::findOrFail($request->flock_id);
+
+        if ($response = $this->ensureFlockIsActive($flock)) {
+            return $response;
+        }
+
+        $date = $request->date;
+        $birdCountOnDate = $flock->birdCountOnDate($date);
+        $mortalityCount = (int) $request->mortality_count;
+
+        if ($mortalityCount > $birdCountOnDate) {
+            return $this->sendValidationError('Validation failed', [
+                'mortality_count' => ["Mortality count cannot exceed bird count on {$date} ({$birdCountOnDate})"],
+            ]);
+        }
+
+        $mortalityPercentage = $birdCountOnDate > 0
+            ? round(($mortalityCount / $birdCountOnDate) * 100, 2)
+            : 0;
         
-        $report = PoultryMortalityReport::create(array_merge($request->all(), [
+        $report = PoultryMortalityReport::create([
             'farm_id' => $farm->id,
+            'flock_id' => $flock->id,
             'poultry_type_id' => $flock->poultry_type_id,
-            'recorded_by' => $user->id
-        ]));
+            'mortality_count' => $mortalityCount,
+            'average_weight' => $request->average_weight,
+            'bird_count' => $birdCountOnDate,
+            'mortality_percentage' => $mortalityPercentage,
+            'notes' => $request->notes,
+            'date' => $date,
+            'recorded_by' => $user->id,
+        ]);
+        $flock->reconcileHouseAllocations();
         $report->load(['flock', 'poultryType', 'creator']);
         return $this->sendResponse($report, 'Flock mortality report created successfully', 201);
     }
@@ -90,6 +116,12 @@ class FlockMortalityReportController extends ApiController
         if ($report->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Flock mortality report not found in this farm');
         }
+
+        $flock = \App\Models\Flock::find($report->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         $validator = Validator::make($request->all(), [
             'flock_id' => 'sometimes|required|exists:flocks,id',
             'mortality_count' => 'sometimes|integer|min:0',
@@ -112,6 +144,9 @@ class FlockMortalityReportController extends ApiController
         }
         
         $report->update($updateData);
+        if ($flock) {
+            $flock->reconcileHouseAllocations();
+        }
         $report->load(['flock', 'poultryType', 'creator']);
         return $this->sendResponse($report, 'Flock mortality report updated successfully');
     }
@@ -126,7 +161,16 @@ class FlockMortalityReportController extends ApiController
         if ($report->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Flock mortality report not found in this farm');
         }
+
+        $flock = \App\Models\Flock::find($report->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         $report->delete();
+        if ($flock) {
+            $flock->reconcileHouseAllocations();
+        }
         return $this->sendResponse(null, 'Flock mortality report deleted successfully');
     }
 

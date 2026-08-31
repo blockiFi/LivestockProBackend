@@ -4,26 +4,74 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
+use App\Models\Flock;
 use App\Models\PoultryFeedInventory;
 use App\Models\PoultryFeedType;
+use App\Models\User;
+use App\Services\FeedUsageInventoryService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
 class FeedInventoryController extends ApiController
 {
+    /**
+     * Farm roles use singular "view/manage feed inventory"; some seeders also
+     * define plural CRUD names. Accept either so stocked inventory is visible.
+     */
+    protected function canViewFeedInventory(User $user, Farm $farm): bool
+    {
+        return $user->hasPermissionTo('view feed inventories', 'api', $farm)
+            || $user->hasPermissionTo('view feed inventory', 'api', $farm)
+            || $user->hasPermissionTo('manage feed inventory', 'api', $farm)
+            || $user->hasPermissionTo('view inventory', 'api', $farm)
+            || $user->hasPermissionTo('manage inventory', 'api', $farm);
+    }
+
+    protected function canManageFeedInventory(User $user, Farm $farm): bool
+    {
+        return $user->hasPermissionTo('manage feed inventory', 'api', $farm)
+            || $user->hasPermissionTo('manage inventory', 'api', $farm)
+            || $user->hasPermissionTo('create feed inventories', 'api', $farm)
+            || $user->hasPermissionTo('update feed inventories', 'api', $farm)
+            || $user->hasPermissionTo('delete feed inventories', 'api', $farm);
+    }
+
+    protected function canCreateFeedInventory(User $user, Farm $farm): bool
+    {
+        return $user->hasPermissionTo('create feed inventories', 'api', $farm)
+            || $this->canManageFeedInventory($user, $farm);
+    }
+
+    protected function canUpdateFeedInventory(User $user, Farm $farm): bool
+    {
+        return $user->hasPermissionTo('update feed inventories', 'api', $farm)
+            || $this->canManageFeedInventory($user, $farm);
+    }
+
+    protected function canDeleteFeedInventory(User $user, Farm $farm): bool
+    {
+        return $user->hasPermissionTo('delete feed inventories', 'api', $farm)
+            || $this->canManageFeedInventory($user, $farm);
+    }
+
     public function index(Request $request, $farm ,$pagination = null)
     {  
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('view feed inventories', 'api', $farm)) {
+        if (!$this->canViewFeedInventory($user, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to view feed inventories');
         }
         // eager-load feed type (as poultry_feed_type alias) and creator
         $query = PoultryFeedInventory::with([
             'feedType',
-            'createdby'
-        ])->where('farm_id', $farm->id);
+            'createdby',
+            'allocatedFlock',
+        ])
+            ->withCount('feedUsages')
+            ->withMax('feedUsages as last_usage_date', 'usage_date')
+            ->where('farm_id', $farm->id);
        
         if ($request->has('search')) {
             $search = $request->search;
@@ -49,6 +97,14 @@ class FeedInventoryController extends ApiController
         } else {
             $inventories = $query->get();
         }
+
+        $collection = $pagination ? $inventories->getCollection() : $inventories;
+        $collection->each(function (PoultryFeedInventory $inventory) {
+            $inventory->setAttribute(
+                'can_delete',
+                FeedUsageInventoryService::canDeleteInventory($inventory)
+            );
+        });
         
         return $this->sendResponse($inventories, 'Feed inventories retrieved successfully');
     }
@@ -57,7 +113,7 @@ class FeedInventoryController extends ApiController
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('create feed inventories', 'api', $farm)) {
+        if (!$this->canCreateFeedInventory($user, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to create feed inventories');
         }
         $validator = Validator::make($request->all(), [
@@ -72,13 +128,28 @@ class FeedInventoryController extends ApiController
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
-        $inventory = PoultryFeedInventory::create(array_merge($request->all(), [
-            'farm_id' => $farm->id,
-            "created_by" => $user->id,
-            'available_quantity' => $request->quantity,
-            'status' => "available",
-        ]));
-        // load feed type and creator
+        $incomingQuantity = (float) $request->quantity;
+
+        $inventory = DB::transaction(function () use ($request, $farm, $user, $incomingQuantity) {
+            $inventory = PoultryFeedInventory::create(array_merge($request->all(), [
+                'farm_id' => $farm->id,
+                'created_by' => $user->id,
+                'available_quantity' => $incomingQuantity,
+                'status' => 'available',
+            ]));
+
+            $remainingQuantity = FeedUsageInventoryService::settleNegativeInventoriesFromNewStock($inventory);
+
+            if ($remainingQuantity !== $incomingQuantity) {
+                $inventory->update(['quantity' => $remainingQuantity]);
+                $inventory->refresh();
+                $inventory->updateStatusBasedOnQuantity();
+            }
+
+            return $inventory->fresh();
+        });
+
+        $inventory->setAttribute('can_delete', FeedUsageInventoryService::canDeleteInventory($inventory));
         return $this->sendResponse($inventory->load('feedType', 'createdby'), 'Feed inventory created successfully', 201);
     }
 
@@ -86,7 +157,7 @@ class FeedInventoryController extends ApiController
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('view feed inventories', 'api', $farm)) {
+        if (!$this->canViewFeedInventory($user, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to view feed inventories');
         }
         if ($inventory->farm_id !== $farm->id) {
@@ -94,6 +165,7 @@ class FeedInventoryController extends ApiController
         }
         // ensure feed type and creator are loaded
         $inventory->load('feedType', 'createdby');
+        $inventory->setAttribute('can_delete', FeedUsageInventoryService::canDeleteInventory($inventory));
         return $this->sendResponse($inventory, 'Feed inventory retrieved successfully');
     }
 
@@ -101,7 +173,7 @@ class FeedInventoryController extends ApiController
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('update feed inventories', 'api', $farm)) {
+        if (!$this->canUpdateFeedInventory($user, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to update feed inventories');
         }
         if ($inventory->farm_id !== $farm->id) {
@@ -119,7 +191,18 @@ class FeedInventoryController extends ApiController
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
-        $inventory->update($request->all());
+
+        $payload = $request->only([
+            'poultry_feed_type_id',
+            'quantity',
+            'batch_number',
+            'manufacturer',
+            'manufacture_date',
+            'expiry_date',
+            'unit_cost',
+        ]);
+
+        $inventory->update($payload);
         // reload relations
         $inventory->load('feedType', 'createdby');
         return $this->sendResponse($inventory, 'Feed inventory updated successfully');
@@ -129,24 +212,87 @@ class FeedInventoryController extends ApiController
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('delete feed inventories', 'api', $farm)) {
+        if (!$this->canDeleteFeedInventory($user, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to delete feed inventories');
         }
         if ($inventory->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Feed inventory not found in this farm');
         }
-        if($inventory->status !== 'available'){
-            return $this->sendError("cant delete an inventory in-use or depleted" );
+
+        if (!FeedUsageInventoryService::canDeleteInventory($inventory)) {
+            if ($inventory->feedUsages()->exists()) {
+                return $this->sendError(
+                    'Cannot delete inventory that has feed usage records. Only unused batches or newly created batches with auto-settlement can be removed.',
+                    [],
+                    422
+                );
+            }
+
+            return $this->sendError('Cannot delete closed inventory', [], 422);
         }
-        $inventory->delete();
+
+        DB::transaction(function () use ($inventory) {
+            if ($inventory->feedUsages()->exists()) {
+                FeedUsageInventoryService::reverseSettlementsAndDelete($inventory);
+            } else {
+                $inventory->delete();
+            }
+        });
+
         return $this->sendResponse(null, 'Feed inventory deleted successfully');
+    }
+
+    public function close(Request $request, $farm, PoultryFeedInventory $inventory)
+    {
+        $user = $request->user();
+        $farm = Farm::findOrFail($farm);
+        if (!$this->canUpdateFeedInventory($user, $farm)) {
+            return $this->sendUnauthorizedError('Unauthorized to update feed inventories');
+        }
+        if ($inventory->farm_id !== $farm->id) {
+            return $this->sendNotFoundError('Feed inventory not found in this farm');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'notes' => 'nullable|string|max:1000',
+            'flock_id' => 'nullable|integer|exists:flocks,id',
+        ]);
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $flockId = $request->input('flock_id');
+        if ($flockId !== null) {
+            $flock = Flock::where('id', $flockId)->where('farm_id', $farm->id)->first();
+            if (!$flock) {
+                return $this->sendValidationError('Validation failed', [
+                    'flock_id' => ['Selected flock does not belong to this farm.'],
+                ]);
+            }
+        }
+
+        try {
+            $inventory = FeedUsageInventoryService::closeInventory(
+                $inventory,
+                $user->id,
+                $request->input('notes'),
+                $flockId !== null ? (int) $flockId : null
+            );
+
+            return $this->sendResponse(
+                $inventory->load('feedType', 'createdby', 'closedBy', 'allocatedFlock'),
+                'Feed inventory closed and remaining stock recorded as damaged'
+            );
+        } catch (\RuntimeException $e) {
+            return $this->sendError($e->getMessage(), [], 422);
+        }
     }
 
     public function statistics(Request $request, $farm)
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('view feed inventories', 'api', $farm)) {
+        if (!$this->canViewFeedInventory($user, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to view feed inventories');
         }
         $query = PoultryFeedInventory::where('farm_id', $farm->id);

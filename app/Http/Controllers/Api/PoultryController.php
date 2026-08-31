@@ -30,11 +30,11 @@ class PoultryController extends APIController
         
         $farmId = $request->route('farm');
         $hasFarm = false;
-        foreach($farms as $farm){
-            if($farm->id == $farmId){
+        foreach ($farms as $farm) {
+            if ((int) $farm->id === (int) $farmId) {
                 $hasFarm = true;
+                break;
             }
-            break;
         }
         if(!$hasFarm){
             return $this->sendError('User does not belong to this farm', [], 403);
@@ -82,22 +82,19 @@ class PoultryController extends APIController
                 ], 400);
             }
 
-            // Get all active flocks for the farm
-            $flocks = Flock::where('farm_id', $farmId)
-                ->with(['poultryType', 'flockStage'])
-                ->whereBetween('arrival_date', [$startDate, $endDate])
-                ->get();
-            $active = Flock::where('farm_id', $farmId)
-                ->where('status', 'active')
-                ->whereBetween('arrival_date', [$startDate, $endDate])
+            // Flock inventory counts should reflect the whole farm (not the report date window).
+            $allFlocks = Flock::where('farm_id', $farmId)
                 ->with(['poultryType', 'flockStage'])
                 ->get();
-            // Calculate total birds from flock quantities
-            $totalBirds = $flocks->sum('quantity');
-            $activeBirds = $active->sum('quantity');
+
+            $activeFlocks = $allFlocks->where('status', 'active');
+            $totalBirds = $activeFlocks->sum(function ($flock) {
+                return (int) ($flock->actual_quantity ?? $flock->quantity ?? 0);
+            });
+            $activeBirds = $totalBirds;
 
             // Get poultry types and their counts
-            $poultryTypeStats = $this->getPoultryTypeStatistics($farmId, $flocks);
+            $poultryTypeStats = $this->getPoultryTypeStatistics($farmId, $allFlocks);
 
             // Calculate feed consumption statistics
             $feedStats = $this->getFeedConsumptionStatistics($farmId, $startDate, $endDate);
@@ -112,7 +109,7 @@ class PoultryController extends APIController
             $weightStats = $this->getWeightStatistics($farmId, $startDate, $endDate);
 
             // Calculate flock performance metrics
-            $performanceStats = $this->getPerformanceStatistics($farmId, $flocks);
+            $performanceStats = $this->getPerformanceStatistics($farmId, $allFlocks);
 
             // Calculate financial metrics
             $financialStats = $this->getFinancialStatistics($farmId, $startDate, $endDate);
@@ -120,9 +117,12 @@ class PoultryController extends APIController
             $statistics = [
                 'summary' => [
                     'total_birds' => $totalBirds,
-                    'total_flocks' => $flocks->count(),
+                    'total_flocks' => $allFlocks->count(),
                     'active_birds' => $activeBirds,
-                    'active_flocks' => $flocks->where('status', 'active')->count(),
+                    'active_flocks' => $activeFlocks->count(),
+                    'completed_flocks' => $allFlocks->where('status', 'completed')->count(),
+                    'sold_flocks' => $allFlocks->where('status', 'sold')->count(),
+                    'culled_flocks' => $allFlocks->where('status', 'culled')->count(),
                     'date_range' => [
                         'start_date' => $startDate->toDateString(),
                         'end_date' => $endDate->toDateString(),
@@ -136,19 +136,20 @@ class PoultryController extends APIController
                 'weight_metrics' => $weightStats,
                 'performance' => $performanceStats,
                 'financial' => $financialStats,
-                'flock_details' => $flocks->map(function ($flock) {
+                'flock_details' => $allFlocks->map(function ($flock) {
                     return [
                         'id' => $flock->id,
                         'name' => $flock->name,
                         'batch_number' => $flock->batch_number,
                         'poultry_type' => $flock->poultryType->name ?? 'Unknown',
                         'quantity' => $flock->quantity,
+                        'actual_quantity' => $flock->actual_quantity,
                         'arrival_date' => $flock->arrival_date,
                         'age_days' => $flock->arrival_date ? Carbon::parse($flock->arrival_date)->diffInDays(now()) : 0,
                         'status' => $flock->status,
                         'stage' => $flock->flockStage->name ?? 'Unknown'
                     ];
-                })
+                })->values()
             ];
 
             return response()->json([

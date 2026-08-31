@@ -55,6 +55,8 @@ class PermissionSeeder extends Seeder
             'create feed usages', 'delete feed usages', 'update feed usages', 'view feed usages',
             // Feeding Batch Schedule Item Management
             'create feeding batch schedule items', 'delete feeding batch schedule items', 'update feeding batch schedule items', 'view feeding batch schedule items',
+            // Feeding Batch Schedule Management
+            'create feeding batch schedules', 'delete feeding batch schedules', 'update feeding batch schedules', 'view feeding batch schedules',
             // Batch Schedule Management
             'create batch schedules', 'delete batch schedules', 'update batch schedules', 'view batch schedules',
             // Feeding Schedule Item Management
@@ -63,6 +65,7 @@ class PermissionSeeder extends Seeder
             'create feeding schedules', 'delete feeding schedules', 'update feeding schedules', 'view feeding schedules',
             // Vaccine Management
             'create vaccines', 'delete vaccines', 'update vaccines', 'view vaccines',
+            'create vaccine products', 'delete vaccine products', 'update vaccine products', 'view vaccine products',
             // Vaccination Record Management
             'create vaccination records', 'delete vaccination records', 'update vaccination records', 'view vaccination records',
         ];

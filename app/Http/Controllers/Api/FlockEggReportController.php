@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
+use App\Models\Flock;
 use App\Models\PoultryFlockEggReport;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -50,6 +51,12 @@ class FlockEggReportController extends ApiController
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
+
+        $flock = Flock::findOrFail($request->flock_id);
+        if ($response = $this->ensureFlockIsActive($flock)) {
+            return $response;
+        }
+
         $report = PoultryFlockEggReport::create(array_merge($request->all(), [
             'farm_id' => $farm->id
         ]));
@@ -79,6 +86,12 @@ class FlockEggReportController extends ApiController
         if ($report->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Flock egg report not found in this farm');
         }
+
+        $flock = Flock::find($report->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         $validator = Validator::make($request->all(), [
             'flock_id' => 'sometimes|required|exists:flocks,id',
             'record_date' => 'sometimes|date',
@@ -102,6 +115,12 @@ class FlockEggReportController extends ApiController
         if ($report->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Flock egg report not found in this farm');
         }
+
+        $flock = Flock::find($report->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         $report->delete();
         return $this->sendResponse(null, 'Flock egg report deleted successfully');
     }

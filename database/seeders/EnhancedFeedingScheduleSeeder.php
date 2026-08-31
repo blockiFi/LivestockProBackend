@@ -47,6 +47,88 @@ class EnhancedFeedingScheduleSeeder extends Seeder
     }
 
     /**
+     * Compress per-day items into weekly plateaus (same feed type + times within each week).
+     *
+     * @param  list<array<string,mixed>>  $dayItems
+     * @return list<array<string,mixed>>
+     */
+    private function collapseToWeeklyRanges(array $dayItems): array
+    {
+        if (empty($dayItems)) {
+            return [];
+        }
+
+        usort($dayItems, fn ($a, $b) => ($a['feeding_day'] ?? 0) <=> ($b['feeding_day'] ?? 0));
+
+        $ranges = [];
+        $bucket = [];
+        $bucketWeek = null;
+        $bucketFeed = null;
+        $bucketTimesKey = null;
+
+        $flush = function () use (&$ranges, &$bucket) {
+            if (empty($bucket)) {
+                return;
+            }
+            $start = (int) $bucket[0]['feeding_day'];
+            $end = (int) $bucket[count($bucket) - 1]['feeding_day'];
+            $avgQty = array_sum(array_column($bucket, 'quantity')) / count($bucket);
+            $first = $bucket[0];
+            $ranges[] = [
+                'feed_type_name' => $first['feed_type_name'],
+                'start_day' => $start,
+                'end_day' => $end,
+                'feeding_day' => $start,
+                'quantity' => round($avgQty, 2),
+                'feeding_times' => $first['feeding_times'],
+            ];
+            $bucket = [];
+        };
+
+        foreach ($dayItems as $item) {
+            $day = (int) $item['feeding_day'];
+            $week = (int) ceil($day / 7);
+            $times = $item['feeding_times'];
+            if (isset($times[0]) && is_string($times[0])) {
+                $timesKey = implode(',', $times);
+            } else {
+                $timesKey = json_encode($times);
+            }
+
+            if (
+                $bucketWeek !== null
+                && ($week !== $bucketWeek
+                    || $item['feed_type_name'] !== $bucketFeed
+                    || $timesKey !== $bucketTimesKey)
+            ) {
+                $flush();
+            }
+
+            $bucketWeek = $week;
+            $bucketFeed = $item['feed_type_name'];
+            $bucketTimesKey = $timesKey;
+            $bucket[] = $item;
+        }
+
+        $flush();
+
+        return $ranges;
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function rangeItem(string $feedType, int $start, ?int $end, float $qty, array $times): array
+    {
+        return [[
+            'feed_type_name' => $feedType,
+            'start_day' => $start,
+            'end_day' => $end,
+            'feeding_day' => $start,
+            'quantity' => $qty,
+            'feeding_times' => $times,
+        ]];
+    }
+
+    /**
      * Create feeding schedules for a poultry type
      */
     private function createFeedingSchedules($poultryType)
@@ -60,6 +142,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'start_date' => $scheduleData['start_date'],
                 'end_date' => $scheduleData['end_date'],
                 'type' => 'default',
+                'poultry_type_id' => $poultryType->id,
             ]);
 
             // Create schedule items for this feeding schedule
@@ -76,10 +159,17 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                         $feedingTimes = $this->formatFeedingTimes($feedingTimes);
                     }
 
+                    $startDay = (int) ($itemData['start_day'] ?? $itemData['feeding_day'] ?? 1);
+                    $endDay = array_key_exists('end_day', $itemData)
+                        ? ($itemData['end_day'] !== null ? (int) $itemData['end_day'] : null)
+                        : $startDay;
+
                     FeedingScheduleItem::create([
                         'feeding_schedule_id' => $schedule->id,
                         'feed_type_id' => $feedType->id,
-                        'feeding_day' => $itemData['feeding_day'],
+                        'feeding_day' => $startDay,
+                        'start_day' => $startDay,
+                        'end_day' => $endDay,
                         'quantity' => $itemData['quantity'],
                         'feeding_times' => $feedingTimes,
                     ]);
@@ -283,7 +373,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:00', '12:00', '18:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getBroilerFastGrowthItems()
@@ -319,7 +409,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:00', '12:00', '18:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getBroilerExtendedItems()
@@ -365,7 +455,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:00', '13:00', '19:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getBroilerOrganicItems()
@@ -401,7 +491,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:00', '14:00', '19:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     // Layer feeding schedule items
@@ -439,7 +529,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:00', '14:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getLayerPremiumItems()
@@ -476,7 +566,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:00', '14:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getLayerFreeRangeItems()
@@ -513,7 +603,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:00', '15:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getLayerExtendedItems()
@@ -565,7 +655,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:00', '14:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     // Cockerel feeding schedule items
@@ -602,7 +692,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:00', '12:00', '18:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getCockerelIntensiveItems()
@@ -638,7 +728,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:00', '12:00', '18:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getCockerelBreederItems()
@@ -673,7 +763,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:00', '15:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getCockerelFreeRangeItems()
@@ -709,7 +799,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:00', '14:00', '19:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     // Pullet feeding schedule items
@@ -745,7 +835,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:00', '15:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getPulletPrecisionItems()
@@ -780,7 +870,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:30', '15:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getPulletOrganicItems()
@@ -815,7 +905,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:00', '15:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getPulletBreederItems()
@@ -850,7 +940,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:00', '15:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     // Dual Purpose feeding schedule items
@@ -886,7 +976,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:00', '14:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getDualPurposeHomesteadItems()
@@ -909,7 +999,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:00', '16:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getDualPurposeHeritageItems()
@@ -944,7 +1034,7 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['07:30', '15:00'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 
     private function getDualPurposeCommercialItems()
@@ -988,6 +1078,6 @@ class EnhancedFeedingScheduleSeeder extends Seeder
                 'feeding_times' => ['06:30', '14:30'],
             ];
         }
-        return $items;
+        return $this->collapseToWeeklyRanges($items);
     }
 }

@@ -10,6 +10,11 @@ use App\Models\FlockStage;
 use App\Models\FlockDailyRecord;
 use App\Models\PoultryEvent;
 use App\Models\PoultryMortalityReport;
+use App\Models\FlockHouseAllocation;
+use App\Services\FarmEntitlementService;
+use App\Services\HouseCapacityService;
+use App\Services\HouseStatusService;
+use App\Services\FlockFcrService;
 use App\Traits\RegisterEvents;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -20,6 +25,10 @@ use Spatie\Permission\PermissionRegistrar;
 class FlockController extends ApiController
 {
     use RegisterEvents;
+
+    public function __construct(protected FlockFcrService $flockFcrService)
+    {
+    }
 
     /**
      * Display a listing of the flocks for a specific farm.
@@ -87,7 +96,7 @@ class FlockController extends ApiController
     /**
      * Store a newly created flock in storage.
      */
-    public function store(Request $request)
+    public function store(Request $request, HouseCapacityService $capacityService)
     {
 
             $validator = Validator::make($request->all(), [
@@ -119,19 +128,43 @@ class FlockController extends ApiController
             return $this->sendError('You do not have permission to manage flocks', [], 403);
         }
 
+        if ($response = $this->ensureEntitled($farm, FarmEntitlementService::ACTION_CREATE_ACTIVE_FLOCK)) {
+            return $response;
+        }
+
         try {
             DB::beginTransaction();
             // Check if the house has enough capacity
             $house = PoultryHouse::findOrFail($request->house_id);
-            $currentOccupancy = Flock::where('house_id', $request->house_id)
-                ->where('status', 'active')
-                ->sum('quantity');
-            
-            if (($currentOccupancy + $request->quantity) > $house->capacity) {
+            // Use allocations for occupancy (multi-pen), fallback to old house capacity if no rules.
+            $currentOccupancy = $capacityService->currentOccupancyForHouse((int) $farm->id, (int) $house->id);
+
+            // Capacity is age-based, driven by flock age at creation time (arrival age).
+            // IMPORTANT: for backdated records, we must evaluate age at the provided arrival_date,
+            // so that age == arrival_age_days (not "today - arrival_date + arrival_age_days").
+            $tempFlock = new Flock([
+                'arrival_date' => $request->arrival_date,
+                'arrival_age_days' => $request->arrival_age_days,
+            ]);
+            $ageDays = $capacityService->flockAgeDays($tempFlock, \Carbon\Carbon::parse($request->arrival_date));
+            $cap = $capacityService->capacityForHouseAtAge($house, $ageDays);
+            $capRule = $capacityService->capacityRuleForHouseAtAge($house, $ageDays);
+            $band = $capacityService->formatAgeBand($capRule);
+
+            if (($currentOccupancy + (int) $request->quantity) > $cap) {
+                DB::rollBack();
+                $houseName = $house->name ?? ('House #' . $house->id);
+                $matchText = $capRule
+                    ? (" (Matched capacity band: {$band})")
+                    : (" (No capacity band matched; using default capacity)");
                 return $this->sendError(
-                    'House capacity exceeded. Current occupancy: ' . $currentOccupancy . 
-                    ', New flock: ' . $request->quantity . 
-                    ', House capacity: ' . $house->capacity,
+                    'House capacity exceeded for this flock age. ' .
+                    'House: ' . $houseName .
+                    ', Age: ' . $ageDays . ' days' . $matchText .
+                    ', Allowed: ' . $cap .
+                    ', Current occupancy: ' . $currentOccupancy .
+                    ', Incoming: ' . $request->quantity .
+                    ', Attempted occupancy: ' . ($currentOccupancy + (int) $request->quantity),
                     [],
                     422
                 );
@@ -144,6 +177,7 @@ class FlockController extends ApiController
                 ->first();
 
             if (!$flockStage) {
+                DB::rollBack();
                 return $this->sendError(
                     'No suitable flock stage found for the given poultry type and age',
                     [],
@@ -169,11 +203,14 @@ class FlockController extends ApiController
                 'expected_end_date' => $request->expected_end_date,
                 'notes' => $request->notes
             ]);
-            // Update the house status to 'active' as it was empty before flock addition
-            if ($house->status !== 'active') {
-                $house->status = 'active';
-                $house->save();
-            }
+
+            // Create initial allocation (multi-pen support)
+            FlockHouseAllocation::updateOrCreate(
+                ['flock_id' => $flock->id, 'house_id' => (int) $request->house_id],
+                ['farm_id' => (int) $request->farm_id, 'quantity' => (int) $request->quantity]
+            );
+            // Keep house status in sync with the actual birds allocation.
+            app(HouseStatusService::class)->recalculateForHouse((int) $request->farm_id, (int) $request->house_id);
             // Register the event
             $this->RegisterEvent(
                 $request->farm_id,
@@ -245,9 +282,9 @@ class FlockController extends ApiController
             'poultryType',
             'flockStage',
             'poultryHouse',
-            'dailyRecords',
-            'mortalityReports',
-            'weightReports',
+            'dailyRecords' => fn ($query) => $query->orderByDesc('date'),
+            'mortalityReports' => fn ($query) => $query->orderByDesc('date'),
+            'weightReports.recordedBy:id,name',
             'eggReports',
             'BatchVaccinationSchedules.schedule',
             'BatchVaccinationSchedules.schedule.items',
@@ -267,7 +304,9 @@ class FlockController extends ApiController
             'poultryMedicationRecords.administrationMethod',
             'poultryVaccinationRecords.vaccine',
             'poultryVaccinationRecords.vaccineInventory',
-            'poultryVaccinationRecords.administrationMethod'
+            'poultryVaccinationRecords.administrationMethod',
+            'flockExpenditures' => fn ($query) => $query->orderByDesc('date')->orderByDesc('id'),
+            'flockSales'
         ])->findOrFail($flockID);
 
         $farm = Farm::findOrFail($FarmId);
@@ -280,17 +319,26 @@ class FlockController extends ApiController
             return $this->sendError('You do not have permission to view flocks', [], 403);
         }
         $this->updateFlockStage($flock);
-        return $this->sendResponse($flock, 'Flock retrieved successfully');
+
+        $payload = $flock->toArray();
+        if ($flock->relationLoaded('dailyRecords')) {
+            $payload['daily_records'] = $flock->dailyRecords
+                ->map(fn ($record) => $record->toFrontendArray())
+                ->values()
+                ->all();
+        }
+
+        return $this->sendResponse($payload, 'Flock retrieved successfully');
     }
 
     /**
      * Update the specified flock in storage.
      */
-    public function update(Request $request, $id)
+    public function update(Request $request, $farm, $flock, HouseCapacityService $capacityService)
     {
-        $flock = Flock::findOrFail($id);
+        $farm = Farm::findOrFail($farm);
+        $flock = Flock::where('farm_id', $farm->id)->findOrFail($flock);
 
-        $farm = Farm::findOrFail($flock->farm_id);
         app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
 
         if (!auth()->user()->can('manage flocks', 'api', $farm->id)) {
@@ -301,6 +349,7 @@ class FlockController extends ApiController
             'name' => 'sometimes|required|string|max:255',
             'house_id' => 'sometimes|required|exists:poultry_houses,id',
             'poultry_type_id' => 'sometimes|required|exists:poultry_types,id',
+            'flock_stage_id' => 'sometimes|required|exists:flock_stages,id',
             'breed' => 'sometimes|required|string|max:255',
             'source' => 'sometimes|required|string|max:255',
             'quantity' => 'sometimes|required|integer|min:1',
@@ -309,7 +358,7 @@ class FlockController extends ApiController
             'status' => 'sometimes|required|in:active,sold,culled,completed',
             'expected_end_date' => 'nullable|date|after:arrival_date',
             'actual_end_date' => 'nullable|date|after:arrival_date',
-            'notes' => 'nullable|string'
+            'notes' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -319,9 +368,90 @@ class FlockController extends ApiController
         try {
             DB::beginTransaction();
 
-            $flock->update($request->all());
+            $oldHouseId = (int) $flock->house_id;
+            $newHouseId = (int) $request->input('house_id', $oldHouseId);
+            $newQuantity = (int) $request->input('quantity', $flock->quantity);
 
-            // Register the event
+            if ($request->has('house_id') || $request->has('quantity')) {
+                $house = PoultryHouse::where('farm_id', $farm->id)->findOrFail($newHouseId);
+
+                $arrivalDate = $request->input('arrival_date', $flock->arrival_date);
+                $arrivalAgeDays = (int) $request->input('arrival_age_days', $flock->arrival_age_days);
+                $tempFlock = new Flock([
+                    'arrival_date' => $arrivalDate,
+                    'arrival_age_days' => $arrivalAgeDays,
+                ]);
+                $ageDays = $capacityService->flockAgeDays(
+                    $tempFlock,
+                    \Carbon\Carbon::parse($arrivalDate)
+                );
+                $cap = $capacityService->capacityForHouseAtAge($house, $ageDays);
+                $capRule = $capacityService->capacityRuleForHouseAtAge($house, $ageDays);
+                $band = $capacityService->formatAgeBand($capRule);
+
+                $currentOccupancy = $capacityService->currentOccupancyForHouse((int) $farm->id, $newHouseId);
+                $existingAllocation = (int) FlockHouseAllocation::query()
+                    ->where('farm_id', $farm->id)
+                    ->where('house_id', $newHouseId)
+                    ->where('flock_id', $flock->id)
+                    ->sum('quantity');
+                $occupancyExcludingThisFlock = max(0, $currentOccupancy - $existingAllocation);
+
+                if (($occupancyExcludingThisFlock + $newQuantity) > $cap) {
+                    DB::rollBack();
+                    $houseName = $house->name ?? ('House #' . $house->id);
+                    $matchText = $capRule
+                        ? (" (Matched capacity band: {$band})")
+                        : (" (No capacity band matched; using default capacity)");
+
+                    return $this->sendError(
+                        'House capacity exceeded for this flock age. ' .
+                        'House: ' . $houseName .
+                        ', Age: ' . $ageDays . ' days' . $matchText .
+                        ', Allowed: ' . $cap .
+                        ', Other occupancy: ' . $occupancyExcludingThisFlock .
+                        ', Requested: ' . $newQuantity .
+                        ', Attempted occupancy: ' . ($occupancyExcludingThisFlock + $newQuantity),
+                        [],
+                        422
+                    );
+                }
+            }
+
+            $flock->update($request->only([
+                'name',
+                'house_id',
+                'poultry_type_id',
+                'flock_stage_id',
+                'breed',
+                'source',
+                'quantity',
+                'arrival_date',
+                'arrival_age_days',
+                'status',
+                'expected_end_date',
+                'actual_end_date',
+                'notes',
+            ]));
+
+            if ($request->has('house_id') || $request->has('quantity')) {
+                FlockHouseAllocation::updateOrCreate(
+                    ['flock_id' => $flock->id, 'house_id' => $newHouseId],
+                    ['farm_id' => (int) $farm->id, 'quantity' => $newQuantity]
+                );
+
+                if ($newHouseId !== $oldHouseId) {
+                    FlockHouseAllocation::where('flock_id', $flock->id)
+                        ->where('house_id', '!=', $newHouseId)
+                        ->delete();
+                }
+
+                app(HouseStatusService::class)->recalculateForHouse((int) $farm->id, $newHouseId);
+                if ($newHouseId !== $oldHouseId) {
+                    app(HouseStatusService::class)->recalculateForHouse((int) $farm->id, $oldHouseId);
+                }
+            }
+
             $this->RegisterEvent(
                 $flock->farm_id,
                 $flock->id,
@@ -331,12 +461,12 @@ class FlockController extends ApiController
             );
 
             DB::commit();
-            $this->updateFlockStage($flock);
+            $this->updateFlockStage($flock->fresh());
+
             return $this->sendResponse(
-                $flock->load(['poultryType', 'flockStage', 'poultryHouse']),
+                $flock->fresh()->load(['poultryType', 'flockStage', 'poultryHouse']),
                 'Flock updated successfully'
             );
-
         } catch (\Exception $e) {
             DB::rollBack();
             return $this->sendError('Failed to update flock: ' . $e->getMessage());
@@ -360,6 +490,19 @@ class FlockController extends ApiController
         try {
             DB::beginTransaction();
 
+            $affectedHouseIds = FlockHouseAllocation::query()
+                ->where('farm_id', (int) $flock->farm_id)
+                ->where('flock_id', (int) $flock->id)
+                ->pluck('house_id')
+                ->unique()
+                ->values()
+                ->all();
+
+            // Legacy fallback: if allocations were never created for this flock.
+            if (count($affectedHouseIds) === 0 && !empty($flock->house_id)) {
+                $affectedHouseIds = [(int) $flock->house_id];
+            }
+
             // Register the event before deletion
             $this->RegisterEvent(
                 $flock->farm_id,
@@ -372,6 +515,10 @@ class FlockController extends ApiController
             $flock->delete();
 
             DB::commit();
+
+            foreach ($affectedHouseIds as $houseId) {
+                app(HouseStatusService::class)->recalculateForHouse((int) $flock->farm_id, (int) $houseId);
+            }
 
             return $this->sendResponse(null, 'Flock deleted successfully');
 
@@ -452,6 +599,13 @@ class FlockController extends ApiController
             return $this->sendValidationError('Invalid status data', $validator->errors()->toArray());
         }
 
+        // Reopening an ended batch consumes an active-batch slot.
+        if ($request->status === 'active' && $flock->status !== 'active') {
+            if ($response = $this->ensureEntitled($farm, FarmEntitlementService::ACTION_CREATE_ACTIVE_FLOCK)) {
+                return $response;
+            }
+        }
+
         try {
             DB::beginTransaction();
 
@@ -471,7 +625,10 @@ class FlockController extends ApiController
 
             DB::commit();
 
-            return $this->sendResponse($flock, 'Flock status updated successfully');
+            // Release (or re-occupy) pens based on remaining active occupancy.
+            app(HouseStatusService::class)->recalculateForFlock($flock->fresh() ?? $flock);
+
+            return $this->sendResponse($flock->fresh(), 'Flock status updated successfully');
 
         } catch (\Exception $e) {
             DB::rollBack();
@@ -519,11 +676,7 @@ class FlockController extends ApiController
      */
     private function calculateFeedConversionRatio($flock)
     {
-        $totalFeed = $flock->poultryFeedUsages()->sum('quantity');
-        $totalWeightGain = $flock->weightReports()->max('average_weight') - 
-                          $flock->weightReports()->min('average_weight');
-        
-        return $totalWeightGain > 0 ? $totalFeed / $totalWeightGain : 0;
+        return $this->flockFcrService->compute($flock) ?? 0;
     }
 
     /**
@@ -600,7 +753,9 @@ class FlockController extends ApiController
      */
     private function updateFlockStage($flock)
     {
-        $currentAge = now()->diffInDays($flock->arrival_date) + $flock->arrival_age_days;
+        // Keep stage-age non-negative; if arrival_date is in the future, treat as 0 days since arrival.
+        $daysSinceArrival = max(0, (int) now()->diffInDays($flock->arrival_date));
+        $currentAge = $daysSinceArrival + (int) ($flock->arrival_age_days ?? 0);
         
         $newStage = FlockStage::where('poultry_type_id', $flock->poultry_type_id)
             ->where('from_age', '<=', $currentAge)

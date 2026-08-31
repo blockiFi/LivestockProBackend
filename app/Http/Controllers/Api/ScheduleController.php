@@ -33,8 +33,19 @@ class ScheduleController extends ApiController
             $query->where('poultry_type_id', request('poultry_type_id'));
         }
 
-        $shouldPaginate = filter_var(request('paginate', false), FILTER_VALIDATE_BOOLEAN);
-        if ($paginated || $shouldPaginate) {
+        $explicitPagination = null;
+        if (request()->has('pagination')) {
+            $explicitPagination = filter_var(request('pagination'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        } elseif (request()->has('paginate')) {
+            $explicitPagination = filter_var(request('paginate'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        }
+
+        $shouldPaginateFromQuery = filter_var(request('paginate', false), FILTER_VALIDATE_BOOLEAN);
+
+        // Allow explicit `pagination=false` to override any route default that may enforce pagination
+        if ($explicitPagination === false) {
+            $schedules = $query->get();
+        } elseif ($paginated || $shouldPaginateFromQuery || $explicitPagination === true) {
             $perPage = request('per_page') ?? request('perPage') ?? 5;
             $schedules = $query->paginate($perPage);
         } else {

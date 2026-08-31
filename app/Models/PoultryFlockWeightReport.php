@@ -57,19 +57,19 @@ class PoultryFlockWeightReport extends Model
     }
 
     /**
-     * Get the user who created the report.
+     * Get the user who recorded the report.
      */
-    public function creator()
+    public function recordedBy()
     {
-        return $this->belongsTo(User::class, 'created_by');
+        return $this->belongsTo(User::class, 'recorded_by');
     }
 
     /**
-     * Get the user who last updated the report.
+     * @deprecated Use recordedBy() instead.
      */
-    public function updater()
+    public function creator()
     {
-        return $this->belongsTo(User::class, 'updated_by');
+        return $this->recordedBy();
     }
 
     /**

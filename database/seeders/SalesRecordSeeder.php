@@ -1,34 +1,40 @@
 <?php
+
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
-use App\Models\SalesRecord;
 use App\Models\Customer;
-use App\Models\Farm;
+use App\Models\Flock;
+use App\Models\SalesRecord;
+use App\Models\User;
+use Illuminate\Database\Seeder;
 
 class SalesRecordSeeder extends Seeder
 {
-    public function run()
+    public function run(): void
     {
         $customers = Customer::all();
-        $flockIds = \App\Models\Flock::pluck('id')->all();
-        $userIds = \App\Models\User::pluck('id')->all();
+        $flockIds = Flock::pluck('id')->all();
+        $userIds = User::pluck('id')->all();
+
         foreach ($customers as $customer) {
             foreach (range(1, 2) as $i) {
+                $quantity = rand(10, 100);
+                $unitPrice = rand(100, 500);
+
                 SalesRecord::create([
                     'customer_id' => $customer->id,
                     'farm_id' => $customer->farm_id,
-                    'flock_id' => count($flockIds) ? $flockIds[array_rand($flockIds)] : 1,
-                    'quantity' => rand(10, 100),
-                    'price_per_unit' => rand(100, 500),
-                    'total_price' => rand(1000, 5000),
-                    'date' => now()->subDays($i),
-                    'sold_by' => count($userIds) ? $userIds[array_rand($userIds)] : 1,
-                    'recorded_by' => count($userIds) ? $userIds[array_rand($userIds)] : 1,
+                    'flock_id' => count($flockIds) ? $flockIds[array_rand($flockIds)] : null,
+                    'quantity' => $quantity,
+                    'unit_price' => $unitPrice,
+                    'total_amount' => $quantity * $unitPrice,
+                    'date' => now()->subDays($i)->toDateString(),
+                    'payment_status' => 'paid',
                     'notes' => 'Sales record note',
                     'type' => ['egg', 'meat', 'manure'][array_rand(['egg', 'meat', 'manure'])],
+                    'created_by' => count($userIds) ? $userIds[array_rand($userIds)] : null,
                 ]);
             }
         }
     }
-} 
+}

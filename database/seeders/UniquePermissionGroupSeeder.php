@@ -93,7 +93,10 @@ class UniquePermissionGroupSeeder extends Seeder
                 'create medication records', 'view medication records', 'update medication records', 'delete medication records',
                 'manage medication inventory', 'view medication inventory',
                 'create vaccines', 'view vaccines', 'update vaccines', 'delete vaccines',
-                'manage vaccine inventory', 'view vaccine inventory'
+                'create vaccine products', 'view vaccine products', 'update vaccine products', 'delete vaccine products',
+                'manage vaccine inventory', 'view vaccine inventory',
+                // Vaccination records
+                'create vaccination records', 'view vaccination records', 'update vaccination records', 'delete vaccination records',
             ],
 
             // Feed Management
@@ -103,7 +106,10 @@ class UniquePermissionGroupSeeder extends Seeder
                 'manage feed inventory', 'view feed inventory',
                 'create feed usages', 'view feed usages', 'update feed usages', 'delete feed usages',
                 'create feeding schedules', 'view feeding schedules', 'update feeding schedules', 'delete feeding schedules',
-                'create feeding schedule items', 'view feeding schedule items', 'update feeding schedule items', 'delete feeding schedule items'
+                'create feeding schedule items', 'view feeding schedule items', 'update feeding schedule items', 'delete feeding schedule items',
+                'create feeding batch schedules', 'view feeding batch schedules', 'update feeding batch schedules', 'delete feeding batch schedules',
+                'create feeding batch schedule items', 'view feeding batch schedule items', 'update feeding batch schedule items', 'delete feeding batch schedule items',
+                'create batch schedules', 'view batch schedules', 'update batch schedules', 'delete batch schedules',
             ],
 
             // Records & Reports
@@ -137,6 +143,7 @@ class UniquePermissionGroupSeeder extends Seeder
             'schedule_management' => [
                 'create schedules', 'view schedules', 'update schedules', 'delete schedules', 'manage schedules',
                 'create batch schedules', 'view batch schedules', 'update batch schedules', 'delete batch schedules',
+                'create feeding batch schedules', 'view feeding batch schedules', 'update feeding batch schedules', 'delete feeding batch schedules',
                 'create feeding batch schedule items', 'view feeding batch schedule items', 'update feeding batch schedule items', 'delete feeding batch schedule items'
             ],
         ];
@@ -156,7 +163,7 @@ class UniquePermissionGroupSeeder extends Seeder
             }
         }
 
-        // Handle any remaining unassigned permissions
+        // Handle any remaining unassigned permissions (ensure no NULL group_id remains)
         $unassignedPermissions = Permission::whereNull('group_id')->get();
         if ($unassignedPermissions->count() > 0) {
             $this->command->info("\nUnassigned permissions:");
@@ -168,6 +175,17 @@ class UniquePermissionGroupSeeder extends Seeder
                     $permission->update(['group_id' => $groups['feed_management']->id]);
                     $this->command->info("  -> Assigned to Feed Management");
                 }
+            }
+        }
+
+        // Final safety net: assign ANY still-unassigned permissions to System Administration.
+        // This guarantees group_id is always set (required by UI grouping).
+        $stillUnassigned = Permission::whereNull('group_id')->get();
+        if ($stillUnassigned->count() > 0) {
+            $this->command->info("\nAssigning remaining permissions to System Administration:");
+            foreach ($stillUnassigned as $permission) {
+                $permission->update(['group_id' => $groups['system_admin']->id]);
+                $this->command->info("  -> {$permission->name}");
             }
         }
 

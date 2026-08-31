@@ -11,12 +11,14 @@ class FeedingBatchScheduleItem extends Model
         'feeding_schedule_item_id',
         'actual_feeding_time',
         'actual_quantity',
+        'actual_total_kg',
         'feeding_date',
         'status',
     ];
 
     protected $casts = [
         'actual_feeding_time' => 'array',
+        'actual_total_kg' => 'decimal:3',
     ];
 
     public function batchSchedule()

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Password;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Foundation\Auth\EmailVerificationRequest;
 use App\Http\Controllers\Api\ApiController;
+use App\Services\Notifications\AccountNotifier;
 use Illuminate\Support\Str;
 
 use Validator;
@@ -48,6 +49,8 @@ class AuthController extends ApiController
                 'token_type' => 'Bearer',
         ];
 
+        app(AccountNotifier::class)->welcome($user);
+
        return $this->sendResponse($data , 'User registered successfully' ,  201);
     }
 
@@ -71,11 +74,18 @@ class AuthController extends ApiController
         }
 
         $user = User::where('email', $request->email)->firstOrFail();
+
+        if ($user->is_platform_admin) {
+            $user->update(['last_admin_login_at' => now()]);
+        }
+
         $token = $user->createToken('auth_token')->plainTextToken;
         $data = [
                 'user' => $user,
-                'token' => $token
-        ];  
+                'token' => $token,
+                'access_token' => $token,
+                'token_type' => 'Bearer',
+        ];
         return $this->sendResponse($data,'Login successful' , 200 );
         
     }
@@ -138,6 +148,7 @@ class AuthController extends ApiController
         $status = Password::reset($credentials, function ($user, $password) {
                 $user->password = Hash::make($password);
                 $user->save();
+                app(AccountNotifier::class)->passwordChanged($user);
             });
         
         if ($status === Password::PASSWORD_RESET) {
@@ -173,6 +184,8 @@ class AuthController extends ApiController
 
         $user->password = Hash::make($credentials['password']);
         $user->save();
+
+        app(AccountNotifier::class)->passwordChanged($user);
 
         return $this->sendResponse( [], 'Password updated successfully');
     }
@@ -245,12 +258,23 @@ class AuthController extends ApiController
         $user = $request->user();
 
         // Load farms
-        $user->load('farms');
+        $user->load('farms', 'roles', 'permissions');
 
-        
+        $userData = $user->toArray();
+        $token = $user->currentAccessToken();
 
-    
-        return $this->sendResponse($user, 'User profile retrieved successfully' );
-        
+        if ($token && str_starts_with($token->name, 'impersonation:')) {
+            $parts = explode(':', $token->name, 3);
+            $adminId = isset($parts[1]) ? (int) $parts[1] : null;
+            $admin = $adminId ? User::query()->find($adminId) : null;
+
+            $userData['impersonation'] = [
+                'active' => true,
+                'impersonated_by' => $admin?->only(['id', 'name', 'email']),
+                'expires_at' => $token->expires_at?->toIso8601String(),
+            ];
+        }
+
+        return $this->sendResponse($userData, 'User profile retrieved successfully');
     }
-} 
+}

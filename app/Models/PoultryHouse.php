@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Models\PoultryHouseCapacityRule;
 
 class PoultryHouse extends Model
 {
@@ -63,5 +64,11 @@ class PoultryHouse extends Model
     public function literType(): BelongsTo
     {
         return $this->belongsTo(LiterType::class);
+    }
+
+    public function capacityRules(): HasMany
+    {
+        return $this->hasMany(PoultryHouseCapacityRule::class, 'house_id')
+            ->orderBy('min_age_days');
     }
 } 

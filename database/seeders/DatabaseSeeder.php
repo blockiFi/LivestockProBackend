@@ -26,79 +26,14 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Disable foreign key checks for clean seeding
-        DB::statement('SET FOREIGN_KEY_CHECKS=0;');
-        DB::table('model_has_roles')->truncate();
-        DB::table('role_has_permissions')->truncate();
-        DB::table('roles')->whereNull('farm_id')->delete();
-        DB::statement('SET FOREIGN_KEY_CHECKS=1;');
-
+        /**
+         * For rich demo data, delegate to ApplicationDemoSeeder,
+         * which wipes and reseeds core tables in a consistent way.
+         *
+         * NOTE: Use this only in development / demo environments.
+         */
         $this->call([
-            // 1. Foundation
-            PermissionSeeder::class,
-            CountrySeeder::class,
-            UserSeeder::class,
-
-            // 2. Farm Infrastructure
-            FarmSeeder::class,
-            PoultryHouseSeeder::class,
-
-            // 3. Poultry Management
-            PoultryTypeSeeder::class,
-            FlockStageSeeder::class,
-
-            // 4. Inventory Lookups
-            PoultryFeedTypeSeeder::class,
-            PoultryFeedProductSeeder::class,
-            AdministrationMethodSeeder::class,
-            PoultryVaccineSeeder::class,
-            PoultryVaccineProductSeeder::class,
-            PoultryMedicationSeeder::class,
-            MedicationProductSeeder::class,
-            // Ensure per-farm vaccine product permissions exist and are assigned to farm owners
-            // VaccineProductPermissionSeeder::class, // Temporarily disabled - needs fixing
-
-            // 5. Inventory
-            EnhancedInventorySeeder::class,
-
-            // 6. Flocks
-            EnhancedFlockSeeder::class,
-
-            // 7. Daily Operations
-            EnhancedFlockDailyRecordSeeder::class,
-            EnhancedFeedUsageSeeder::class,
-            EnhancedVaccinationRecordSeeder::class,
-
-            // 8. Business
-            CustomerSeeder::class,
-            EnhancedSalesRecordSeeder::class,
-
-            // 9. Scheduling
-            // Enhanced seeders with comprehensive schedule data
-            EnhancedScheduleSeeder::class,
-            EnhancedFeedingScheduleSeeder::class,
-            // Original seeders (can be commented out if using enhanced versions)
-            // FeedingScheduleSeeder::class,
-            // FeedingScheduleItemSeeder::class,
-            // FeedingBatchScheduleSeeder::class,
-            // FeedingBatchScheduleItemSeeder::class,
-            // ScheduleSeeder::class,
-            // ScheduleItemSeeder::class,
-            BatchScheduleSeeder::class,
-            BatchScheduleItemSeeder::class,
-
-            // 10. Legacy
-            PoultryFeedUsageSeeder::class,
-            PoultryMedicationRecordSeeder::class,
-            PoultryVaccinationRecordSeeder::class,
-            FlockDailyRecordSeeder::class,
-            PoultryFlockEggReportSeeder::class,
-            PoultryFlockWeightReportSeeder::class,
-            PoultryMortalityReportSeeder::class,
-            SalesRecordSeeder::class,
-
-            // 11. Events
-            PoultryEventSeeder::class,
+            ApplicationDemoSeeder::class,
         ]);
     }
 }

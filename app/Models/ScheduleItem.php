@@ -9,18 +9,26 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class ScheduleItem extends Model
 {
     protected $fillable = [
-        'name',
-        'description',
-        'day_number',
         'schedule_id',
-        'medication_product_id',
-        'poultry_vaccine_product_id',
-        'created_by'
+        'age_days',
+        'poultry_vaccine_id',
+        'poultry_medication_id',
+        'name',
+        'dose_unit',
+        'dose',
+        'withdrawal_period_days',
+        'storage_instructions',
+        'description',
     ];
 
     public function schedule(): BelongsTo
     {
         return $this->belongsTo(Schedule::class);
+    }
+
+    public function poultryVaccine(): BelongsTo
+    {
+        return $this->belongsTo(PoultryVaccine::class, 'poultry_vaccine_id');
     }
 
     public function administrationMethods(): HasMany

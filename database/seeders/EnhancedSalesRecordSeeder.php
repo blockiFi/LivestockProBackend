@@ -132,21 +132,24 @@ class EnhancedSalesRecordSeeder extends Seeder
         
         for ($i = 0; $i < $salesCount && $remainingEggs > 0; $i++) {
             $customer = $customers->random();
+            $flock = $layerFlocks->random();
             $quantity = min($remainingEggs, $faker->numberBetween(50, 200));
             $remainingEggs -= $quantity;
-            
+
             $unitPrice = $this->getEggPrice($date, $faker);
-            $totalPrice = $quantity * $unitPrice;
-            
+            $totalPrice = round($quantity * $unitPrice, 2);
+
             SalesRecord::create([
                 'farm_id' => $farm->id,
+                'flock_id' => $flock->id,
                 'customer_id' => $customer->id,
-                'product_type' => 'eggs',
+                'type' => 'egg',
                 'quantity' => $quantity,
                 'unit_price' => $unitPrice,
                 'total_amount' => $totalPrice,
-                'sale_date' => $date,
+                'date' => $date->toDateString(),
                 'payment_method' => $this->getPaymentMethod($faker),
+                'payment_status' => 'paid',
                 'notes' => $this->generateEggSaleNotes($faker, $quantity, $unitPrice),
                 'created_by' => $faker->numberBetween(1, 10),
             ]);
@@ -175,14 +178,16 @@ class EnhancedSalesRecordSeeder extends Seeder
                 
                 SalesRecord::create([
                     'farm_id' => $farm->id,
+                    'flock_id' => $flock->id,
                     'customer_id' => $customer->id,
-                    'product_type' => 'broilers',
+                    'type' => 'meat',
                     'quantity' => $quantity,
                     'unit_price' => $unitPrice,
-                    'total_amount' => $totalPrice,
-                    'sale_date' => $date,
+                    'total_amount' => round($totalPrice, 2),
+                    'date' => $date->toDateString(),
                     'payment_method' => 'bank_transfer',
-                    'notes' => "Bulk sale of {$quantity} broilers from flock {$flock->name}",
+                    'payment_status' => 'paid',
+                    'notes' => "Bulk meat sale of {$quantity} kg from flock {$flock->name}",
                     'created_by' => $faker->numberBetween(1, 10),
                 ]);
             }
@@ -203,35 +208,39 @@ class EnhancedSalesRecordSeeder extends Seeder
             
             SalesRecord::create([
                 'farm_id' => $farm->id,
+                'flock_id' => $flocks->isNotEmpty() ? $flocks->random()->id : null,
                 'customer_id' => $customer->id,
-                'product_type' => 'eggs',
+                'type' => 'egg',
                 'quantity' => $quantity,
                 'unit_price' => $unitPrice,
-                'total_amount' => $totalPrice,
-                'sale_date' => $date,
+                'total_amount' => round($totalPrice, 2),
+                'date' => $date->toDateString(),
                 'payment_method' => 'bank_transfer',
+                'payment_status' => 'paid',
                 'notes' => "Large order for {$customer->name} - bulk discount applied",
                 'created_by' => $faker->numberBetween(1, 10),
             ]);
         }
-        
-        // Live bird sales (layers, pullets)
-        if ($faker->boolean(30)) {
+
+        // Manure sales (farm-level)
+        if ($faker->boolean(20)) {
             $customer = $customers->random();
-            $quantity = $faker->numberBetween(50, 200);
-            $unitPrice = $this->getLiveBirdPrice($date, $faker);
-            $totalPrice = $quantity * $unitPrice;
-            
+            $quantity = $faker->numberBetween(10, 100);
+            $unitPrice = $faker->randomFloat(2, 5, 25);
+            $totalPrice = round($quantity * $unitPrice, 2);
+
             SalesRecord::create([
                 'farm_id' => $farm->id,
+                'flock_id' => null,
                 'customer_id' => $customer->id,
-                'product_type' => 'live_birds',
+                'type' => 'manure',
                 'quantity' => $quantity,
                 'unit_price' => $unitPrice,
                 'total_amount' => $totalPrice,
-                'sale_date' => $date,
+                'date' => $date->toDateString(),
                 'payment_method' => 'bank_transfer',
-                'notes' => "Live bird sale - {$quantity} birds",
+                'payment_status' => 'paid',
+                'notes' => 'Bulk manure sale',
                 'created_by' => $faker->numberBetween(1, 10),
             ]);
         }

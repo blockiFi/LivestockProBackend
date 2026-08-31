@@ -11,6 +11,11 @@ class PoultryFeedInventory extends Model
     protected $fillable = [
         'quantity',
         'available_quantity',
+        'damaged_quantity',
+        'closed_at',
+        'closed_by',
+        'close_notes',
+        'allocated_flock_id',
         'unit_cost',
         'expiry_date',
         'batch_number',
@@ -40,7 +45,7 @@ class PoultryFeedInventory extends Model
 
     public function feedUsages(): HasMany
     {
-        return $this->hasMany(PoultryFeedUsage::class);
+        return $this->hasMany(PoultryFeedUsage::class, 'poultry_feed_inventory_id');
     }
 
     public function createdBy(): BelongsTo
@@ -48,31 +53,67 @@ class PoultryFeedInventory extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    /**
-     * Update inventory status based on quantity thresholds
-     */
-    public function updateStatusBasedOnQuantity()
+    public function closedBy(): BelongsTo
     {
-        $originalQuantity = $this->getOriginal('quantity');
-        $currentQuantity = $this->quantity;
-        
-        // If quantity is 0, set status to depleted
-        if ($currentQuantity <= 0) {
+        return $this->belongsTo(User::class, 'closed_by');
+    }
+
+    public function allocatedFlock(): BelongsTo
+    {
+        return $this->belongsTo(Flock::class, 'allocated_flock_id');
+    }
+
+    /**
+     * Update inventory status based on quantity thresholds.
+     * Automatically closes the batch when remaining quantity reaches zero.
+     */
+    public function updateStatusBasedOnQuantity(): void
+    {
+        $currentQuantity = (float) $this->quantity;
+
+        if ($this->status === 'closed') {
+            if ($currentQuantity > 0) {
+                $this->reopenFromAutoClose();
+            }
+            return;
+        }
+
+        if ($currentQuantity < 0) {
             $this->status = 'depleted';
+        } elseif ($currentQuantity == 0.0) {
+            $this->applyAutoCloseAsFullyUsed();
+            return;
+        } else {
+            $originalQuantity = (float) $this->getOriginal('quantity');
+
+            if ($originalQuantity > 0 && $currentQuantity <= ($originalQuantity * 0.2)) {
+                $this->status = 'in_use';
+            } elseif ($originalQuantity > 0 && $currentQuantity > ($originalQuantity * 0.2)) {
+                $this->status = 'available';
+            }
         }
-        // If quantity is down 80% or more from original, set status to in_use (low)
-        elseif ($originalQuantity > 0 && $currentQuantity <= ($originalQuantity * 0.2)) {
-            $this->status = 'in_use';
-        }
-        // If quantity is above 20% of original, set status to available
-        elseif ($originalQuantity > 0 && $currentQuantity > ($originalQuantity * 0.2)) {
-            $this->status = 'available';
-        }
-        
-        // Save the status if it changed
+
         if ($this->isDirty('status')) {
             $this->save();
         }
+    }
+
+    protected function applyAutoCloseAsFullyUsed(): void
+    {
+        $this->status = 'closed';
+        $this->closed_at = $this->closed_at ?? now();
+        $this->close_notes = $this->close_notes ?? 'Automatically closed — stock fully used';
+        $this->save();
+    }
+
+    protected function reopenFromAutoClose(): void
+    {
+        $this->status = 'available';
+        $this->closed_at = null;
+        $this->closed_by = null;
+        $this->close_notes = null;
+        $this->save();
+        $this->updateStatusBasedOnQuantity();
     }
 
     /**

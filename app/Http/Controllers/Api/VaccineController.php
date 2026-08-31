@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\PermissionDoesNotExist;
 use App\Models\Farm;
 use App\Models\PoultryVaccine;
 use Illuminate\Http\Request;
@@ -10,6 +11,50 @@ use Illuminate\Validation\Rule;
 
 class VaccineController extends ApiController
 {
+    private function canAny($user, Farm $farm, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            try {
+                if ($user->hasPermissionTo($permission, 'api', $farm)) {
+                    return true;
+                }
+            } catch (PermissionDoesNotExist) {
+                continue;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return array<int, string> */
+    private function viewVaccinePermissions(): array
+    {
+        return [
+            'view vaccines',
+            'create vaccines',
+            'update vaccines',
+            'delete vaccines',
+            'view vaccine products',
+            'create vaccine products',
+            'update vaccine products',
+            'view vaccine inventory',
+            'view inventory',
+            'manage vaccine inventory',
+            'manage inventory',
+        ];
+    }
+
+    /** @return array<int, string> */
+    private function createVaccinePermissions(): array
+    {
+        return [
+            'create vaccines',
+            'create vaccine products',
+            'manage vaccine inventory',
+            'manage inventory',
+        ];
+    }
+
     /**
      * Display a listing of the vaccines.
      */
@@ -18,13 +63,15 @@ class VaccineController extends ApiController
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        // Check if user has permission to view vaccines
-        if (!$user->hasPermissionTo('view vaccines', 'api', $farm)) {
+        if (! $this->canAny($user, $farm, $this->viewVaccinePermissions())) {
             return $this->sendUnauthorizedError('Unauthorized to view vaccines');
         }
 
-        // Apply filters
-        $query = $farm->vaccines()->with('products');
+        // Apply filters — include platform defaults and farm-specific types
+        $query = PoultryVaccine::with('products')
+            ->where(function ($q) use ($farm) {
+                $q->where('farm_id', $farm->id)->orWhereNull('farm_id');
+            });
 
         if ($request->has('type')) {
             $query->where('type', $request->type);
@@ -62,15 +109,21 @@ class VaccineController extends ApiController
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        // Check if user has permission to view vaccines
-        if (!$user->hasPermissionTo('view vaccines', 'api', $farm)) {
+        if (! $this->canAny($user, $farm, $this->viewVaccinePermissions())) {
             return $this->sendUnauthorizedError('Unauthorized to view vaccines');
         }
 
         // Apply filters
-        $query = PoultryVaccine::with(['products' => function($q) {
-                $q->with('inventories');
-            }])
+        $query = PoultryVaccine::with([
+            'products' => function ($q) use ($farm) {
+                $q->where(function ($inner) use ($farm) {
+                    $inner->where('farm_id', $farm->id)->orWhereNull('farm_id');
+                })->with([
+                    'administrationMethod',
+                    'inventories' => fn ($iq) => $iq->where('farm_id', $farm->id),
+                ]);
+            },
+        ])
             ->where(function($q) use ($farm) {
                 $q->where('farm_id', $farm->id)
                   ->orWhereNull('farm_id');
@@ -105,8 +158,7 @@ class VaccineController extends ApiController
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        // Check if user has permission to create vaccines
-        if (!$user->hasPermissionTo('create vaccines', 'api', $farm)) {
+        if (! $this->canAny($user, $farm, $this->createVaccinePermissions())) {
             return $this->sendUnauthorizedError('Unauthorized to create vaccines');
         }
 

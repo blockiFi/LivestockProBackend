@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
+use App\Models\Flock;
 use App\Models\PoultryFlockWeightReport;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -54,10 +55,17 @@ class FlockWeightReportController extends ApiController
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->all());
         }
+
+        $flock = Flock::findOrFail($request->flock_id);
+        if ($response = $this->ensureFlockIsActive($flock)) {
+            return $response;
+        }
+
         $report = PoultryFlockWeightReport::create(array_merge($request->all(), [
             'farm_id' => $farm->id,
             'recorded_by' => $user->id,
         ]));
+        $report->load('recordedBy:id,name');
         return $this->sendResponse($report, 'Flock weight report created successfully', 201);
     }
 
@@ -84,6 +92,12 @@ class FlockWeightReportController extends ApiController
         if ($report->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Flock weight report not found in this farm');
         }
+
+        $flock = Flock::find($report->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         $validator = Validator::make($request->all(), [
             'flock_id' => 'sometimes|required|exists:flocks,id',
             'record_date' => 'sometimes|date',
@@ -106,6 +120,12 @@ class FlockWeightReportController extends ApiController
         if ($report->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Flock weight report not found in this farm');
         }
+
+        $flock = Flock::find($report->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         $report->delete();
         return $this->sendResponse(null, 'Flock weight report deleted successfully');
     }

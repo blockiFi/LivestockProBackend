@@ -23,7 +23,9 @@ class PoultryFlockEggReport extends Model
         'production_percentage',
         'bird_count',
         'notes',
+        'date',
         'report_date',
+        'recorded_by',
         'created_by',
         'updated_by',
     ];

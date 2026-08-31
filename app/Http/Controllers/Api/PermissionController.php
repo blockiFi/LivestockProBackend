@@ -34,15 +34,20 @@ class PermissionController extends ApiController
     }
 
     /**
-     * Get all roles
+     * Get all permission groups with their permissions
      */
-    public function getGroupPermissions(){
-        if (!auth()->user()->can('view permissions')) {
+    public function getGroupPermissions($farm){
+        $farm = Farm::findOrFail($farm);
+        
+        // Set the team context (important for spatie/permission multi-tenancy)
+        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+        
+        if (!auth()->user()->can('view permissions', 'api', $farm->id)) {
             return $this->sendError('You do not have permission to view permissions', [], 403);
         }
 
-        $permissions = Group::with('permissions')->get();
-        return $this->sendResponse($permissions, 'Grouped permissions retrieved successfully');
+        $permissionGroups = Group::with('permissions')->get();
+        return $this->sendResponse($permissionGroups, 'Grouped permissions retrieved successfully');
     }
     public function getRoles($farm)
     {   
@@ -495,41 +500,34 @@ class PermissionController extends ApiController
             ['user' => $user ,'permissions' => $permissions] , 'User permissions retrieved successfully');
     }
     /**
-     * Get user permissions
+     * Get the authenticated user's permission names for a farm.
      */
-    public function getMyFarmPermissions($farm )
-    {   
-      
-
+    public function getMyFarmPermissions($farm)
+    {
         $user = auth()->user();
-        
-        if(!$user){
-        return $this->sendError('User not found', [], 404);
+
+        if (!$user) {
+            return $this->sendError('User not found', [], 404);
         }
-        
+
         if (!$user->farms()->where('farms.id', $farm)->exists()) {
             return $this->sendError('User does not belong to this farm', [], 403);
         }
 
-        // Loop through user roles for this farm and collect all permissions
+        app(PermissionRegistrar::class)->setPermissionsTeamId($farm);
+
         $permissions = [];
-          $roles = $user->roles()->where('roles.farm_id', $farm)->get();
+        $roles = $user->roles()->where('roles.farm_id', $farm)->with('permissions')->get();
 
         foreach ($roles as $role) {
-            return $role->permissions;
             foreach ($role->permissions as $permission) {
                 $permissions[] = $permission->name;
             }
         }
-        $permissions = array_unique($permissions);
 
-        return $this->sendResponse(
-            [
-                'user' => $user,
-                'permissions' => $permissions
-            ],
-            'User permissions retrieved successfully'
-        );
+        $permissions = array_values(array_unique($permissions));
+
+        return $this->sendResponse($permissions, 'User permissions retrieved successfully');
     }
 
     /**

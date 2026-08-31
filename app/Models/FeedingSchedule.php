@@ -21,6 +21,11 @@ class FeedingSchedule extends Model
         return $this->belongsTo(PoultryType::class);
     }
 
+    public function farm()
+    {
+        return $this->belongsTo(Farm::class);
+    }
+
     public function items()
     {
         return $this->hasMany(FeedingScheduleItem::class);

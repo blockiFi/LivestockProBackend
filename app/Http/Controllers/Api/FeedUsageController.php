@@ -8,11 +8,15 @@ use App\Models\FeedingBatchSchedule;
 use App\Models\FeedingBatchScheduleItem;
 use App\Models\Flock;
 use App\Models\PoultryFeedUsage;
+use App\Models\FlockExpenditure;
+use App\Models\PoultryFeedInventory;
+use App\Services\FeedingDayService;
+use App\Services\FeedingScheduleRangeService;
+use App\Services\FeedUsageInventoryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
-use Carbon\Carbon;
 
 class FeedUsageController extends ApiController
 {
@@ -23,17 +27,51 @@ class FeedUsageController extends ApiController
         if (!$user->hasPermissionTo('view feed usages', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to view feed usages');
         }
-        $query = PoultryFeedUsage::where('farm_id', $farm->id);
+        $query = PoultryFeedUsage::with([
+            'flock:id,name,batch_number,farm_id',
+            'feedType:id,name',
+            'creator:id,name',
+        ])->where('farm_id', $farm->id);
+
         if ($request->has('feed_inventory_id')) {
-            $query->where('poultry_feed_inventory_id', $request->feed_inventory_id);
+            $inventory = PoultryFeedInventory::where('id', $request->feed_inventory_id)
+                ->where('farm_id', $farm->id)
+                ->first();
+
+            if (!$inventory) {
+                return $this->sendNotFoundError('Feed inventory not found in this farm');
+            }
+
+            $query->where('poultry_feed_inventory_id', $inventory->id);
         }
+
         if ($request->has('search')) {
             $search = $request->search;
             $query->where('usage_date', 'like', "%{$search}%");
         }
+
         $sortField = $request->input('sort_by', 'usage_date');
         $sortDirection = $request->input('sort_direction', 'desc');
         $query->orderBy($sortField, $sortDirection);
+
+        if ($request->has('feed_inventory_id') && !$request->has('per_page')) {
+            $usages = $query->get();
+            $usageIds = $usages->pluck('id')->all();
+            $recordedIds = empty($usageIds)
+                ? []
+                : FlockExpenditure::where('source_type', 'feed_usage')
+                    ->whereIn('source_id', $usageIds)
+                    ->pluck('source_id')
+                    ->all();
+            $recordedLookup = array_fill_keys($recordedIds, true);
+
+            $usages->each(function (PoultryFeedUsage $usage) use ($recordedLookup) {
+                $usage->setAttribute('has_expenditure', isset($recordedLookup[$usage->id]));
+            });
+
+            return $this->sendResponse($usages, 'Feed usages retrieved successfully');
+        }
+
         $perPage = $request->input('per_page', 10);
         $usages = $query->paginate($perPage);
         return $this->sendResponse($usages, 'Feed usages retrieved successfully');
@@ -58,41 +96,38 @@ class FeedUsageController extends ApiController
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
 
-        // Get the feed inventory record first to check availability
-        $feedInventory = \App\Models\PoultryFeedInventory::findOrFail($request->poultry_feed_inventory_id);
-        
-        // Check if there's enough inventory
-        if ($feedInventory->quantity < $request->quantity) {
-            return $this->sendError('Insufficient inventory quantity. Available: ' . $feedInventory->quantity . ', Requested: ' . $request->quantity, [], 400);
+        [$flock, $inactiveResponse] = $this->activeFlockForFarm((int) $request->flock_id, $farm->id);
+        if ($inactiveResponse) {
+            return $inactiveResponse;
         }
 
-        // Use database transaction to ensure atomicity
-        $usage = DB::transaction(function () use ($request, $farm, $feedInventory) {
-            // Reduce inventory quantity
-            $feedInventory->decrement('quantity', $request->quantity);
-            
-            // Update inventory status based on new quantity
-            $feedInventory->refresh();
-            $feedInventory->updateStatusBasedOnQuantity();
-            
-            // Create the usage record
-            $usage = PoultryFeedUsage::create(array_merge($request->all(), [
-                'farm_id' => $farm->id,
-                'created_by' => auth()->id()
-            ]));
+        $feedInventory = \App\Models\PoultryFeedInventory::findOrFail($request->poultry_feed_inventory_id);
 
-            // Auto-sync feeding batch schedule item for this flock
-            $this->syncBatchScheduleItem(
-                $request->flock_id,
-                $request->poultry_feed_type_id,
-                $request->quantity,
-                $request->usage_date
-            );
+        try {
+            $usage = DB::transaction(function () use ($request, $farm, $feedInventory) {
+                FeedUsageInventoryService::deductFromInventory($feedInventory, (float) $request->quantity);
 
-            return $usage;
-        });
+                $usage = PoultryFeedUsage::create(array_merge($request->all(), [
+                    'farm_id' => $farm->id,
+                    'created_by' => auth()->id(),
+                ]));
 
-        return $this->sendResponse($usage, 'Feed usage created successfully', 201);
+                $this->syncBatchScheduleItem(
+                    $request->flock_id,
+                    $request->poultry_feed_type_id,
+                    $request->quantity,
+                    $request->usage_date
+                );
+
+                return $usage;
+            });
+
+            FlockExpenditure::recordFromFeedUsage($usage);
+
+            return $this->sendResponse($usage, 'Feed usage created successfully', 201);
+        } catch (\RuntimeException $e) {
+            return $this->sendError($e->getMessage(), [], 400);
+        }
     }
 
     public function show(Request $request, $farm, PoultryFeedUsage $usage)
@@ -118,8 +153,15 @@ class FeedUsageController extends ApiController
         if ($usage->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Feed usage not found in this farm');
         }
+
+        $flock = Flock::find($usage->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         $validator = Validator::make($request->all(), [
             'poultry_feed_inventory_id' => 'sometimes|required|exists:poultry_feed_inventories,id',
+            'move_quantity' => 'sometimes|numeric|min:0.01',
             'poultry_feed_type_id' => 'sometimes|required|exists:poultry_feed_types,id',
             'flock_id' => 'sometimes|required|exists:flocks,id',
             'quantity' => 'sometimes|numeric|min:0',
@@ -130,37 +172,114 @@ class FeedUsageController extends ApiController
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
 
-        // Handle inventory adjustments if quantity is being updated
-        if ($request->has('quantity') && $request->quantity != $usage->quantity) {
-            DB::transaction(function () use ($request, $usage) {
-                $feedInventory = $usage->feedInventory;
-                
-                if ($feedInventory) {
-                    $quantityDifference = $request->quantity - $usage->quantity;
-                    
-                    // Adjust inventory based on quantity difference
-                    if ($quantityDifference > 0) {
-                        // Quantity increased - reduce inventory
-                        $feedInventory->decrement('quantity', $quantityDifference);
-                    } elseif ($quantityDifference < 0) {
-                        // Quantity decreased - return to inventory
-                        $feedInventory->increment('quantity', abs($quantityDifference));
-                    }
-                    
-                    // Update inventory status based on new quantity
-                    $feedInventory->refresh();
-                    $feedInventory->updateStatusBasedOnQuantity();
-                }
-                
-                // Update the usage record
-                $usage->update($request->all());
-            });
-        } else {
-            // No quantity change, just update normally
-            $usage->update($request->all());
-        }
+        try {
+            $splitUsage = null;
 
-        return $this->sendResponse($usage, 'Feed usage updated successfully');
+            $usage = DB::transaction(function () use ($request, $usage, $farm, &$splitUsage) {
+                $newQuantity = $request->has('quantity') ? (float) $request->quantity : (float) $usage->quantity;
+                $newInventoryId = $request->has('poultry_feed_inventory_id')
+                    ? (int) $request->poultry_feed_inventory_id
+                    : (int) $usage->poultry_feed_inventory_id;
+
+                $quantityChanged = $request->has('quantity')
+                    && round($newQuantity, 3) !== round((float) $usage->quantity, 3);
+                $inventoryChanged = $request->has('poultry_feed_inventory_id')
+                    && $newInventoryId !== (int) $usage->poultry_feed_inventory_id;
+
+                if ($inventoryChanged) {
+                    $newInventory = PoultryFeedInventory::where('farm_id', $farm->id)
+                        ->where('id', $newInventoryId)
+                        ->first();
+
+                    if (!$newInventory) {
+                        throw new \RuntimeException('Destination feed inventory not found in this farm.');
+                    }
+
+                    $moveQuantity = $request->has('move_quantity')
+                        ? (float) $request->move_quantity
+                        : null;
+
+                    $moveResult = FeedUsageInventoryService::moveUsageToInventory(
+                        $usage,
+                        $newInventory,
+                        $moveQuantity
+                    );
+
+                    $usage = $moveResult['usage'];
+                    $splitUsage = $moveResult['moved_usage'];
+
+                    if ($splitUsage) {
+                        FlockExpenditure::recordFromFeedUsage($splitUsage);
+                        $this->syncBatchScheduleItem(
+                            $splitUsage->flock_id,
+                            $splitUsage->poultry_feed_type_id,
+                            $splitUsage->quantity,
+                            $splitUsage->usage_date?->toDateString() ?? $splitUsage->usage_date
+                        );
+                    }
+
+                    FlockExpenditure::recordFromFeedUsage($usage);
+                    $this->syncBatchScheduleItem(
+                        $usage->flock_id,
+                        $usage->poultry_feed_type_id,
+                        $usage->quantity,
+                        $usage->usage_date?->toDateString() ?? $usage->usage_date
+                    );
+
+                    return $usage;
+                }
+
+                $updatePayload = $request->only([
+                    'poultry_feed_inventory_id',
+                    'poultry_feed_type_id',
+                    'flock_id',
+                    'quantity',
+                    'unit_cost',
+                    'usage_date',
+                ]);
+
+                if ($quantityChanged) {
+                    FeedUsageInventoryService::applyUsageChange($usage, $newQuantity, $newInventoryId);
+                }
+
+                $usage->update($updatePayload);
+
+                $usage = $usage->fresh();
+
+                if (
+                    $request->has('quantity')
+                    || $request->has('flock_id')
+                    || $request->has('poultry_feed_type_id')
+                    || $request->has('usage_date')
+                ) {
+                    $this->syncBatchScheduleItem(
+                        $usage->flock_id,
+                        $usage->poultry_feed_type_id,
+                        $usage->quantity,
+                        $usage->usage_date?->toDateString() ?? $usage->usage_date
+                    );
+                }
+
+                FlockExpenditure::recordFromFeedUsage($usage);
+
+                return $usage;
+            });
+
+            $usage->load(['feedInventory', 'feedType', 'flock', 'creator']);
+
+            if ($splitUsage) {
+                $splitUsage->load(['feedInventory', 'feedType', 'flock', 'creator']);
+
+                return $this->sendResponse([
+                    'usage' => $usage,
+                    'split_usage' => $splitUsage,
+                ], 'Feed usage updated successfully');
+            }
+
+            return $this->sendResponse($usage, 'Feed usage updated successfully');
+        } catch (\RuntimeException $e) {
+            return $this->sendError($e->getMessage(), [], 400);
+        }
     }
 
     public function destroy(Request $request, $farm, PoultryFeedUsage $usage)
@@ -174,25 +293,64 @@ class FeedUsageController extends ApiController
             return $this->sendNotFoundError('Feed usage not found in this farm');
         }
 
-        // Use database transaction to ensure atomicity
-        \DB::transaction(function () use ($usage) {
-            // Get the feed inventory record
-            $feedInventory = $usage->feedInventory;
-            
-            if ($feedInventory) {
-                // Return the quantity to the inventory
-                $feedInventory->increment('quantity', $usage->quantity);
-                
-                // Update inventory status based on new quantity
-                $feedInventory->refresh();
-                $feedInventory->updateStatusBasedOnQuantity();
-            }
-            
-            // Delete the usage record
+        $flock = Flock::find($usage->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
+        DB::transaction(function () use ($usage) {
+            FlockExpenditure::deleteForSource('feed_usage', $usage->id);
+            FeedUsageInventoryService::restoreOnDelete($usage);
             $usage->delete();
         });
 
         return $this->sendResponse(null, 'Feed usage deleted successfully');
+    }
+
+    /**
+     * Ensure a flock expenditure exists for this feed usage (create if missing).
+     */
+    public function forceExpenditure(Request $request, $farm, PoultryFeedUsage $usage)
+    {
+        $user = $request->user();
+        $farm = Farm::findOrFail($farm);
+
+        if (!$user->hasPermissionTo('update feed usages', 'api', $farm)) {
+            return $this->sendUnauthorizedError('Unauthorized to force feed usage expenditure');
+        }
+
+        if ($usage->farm_id !== $farm->id) {
+            return $this->sendNotFoundError('Feed usage not found in this farm');
+        }
+
+        $existing = FlockExpenditure::where('source_type', 'feed_usage')
+            ->where('source_id', $usage->id)
+            ->first();
+
+        if ($existing) {
+            return $this->sendResponse([
+                'expenditure' => $existing,
+                'created' => false,
+                'has_expenditure' => true,
+            ], 'Expenditure already recorded for this feed usage');
+        }
+
+        $usage->loadMissing('feedInventory');
+        $expenditure = FlockExpenditure::recordFromFeedUsage($usage);
+
+        if (!$expenditure) {
+            return $this->sendError(
+                'Unable to record expenditure. Feed usage must have a unit cost greater than zero.',
+                [],
+                422
+            );
+        }
+
+        return $this->sendResponse([
+            'expenditure' => $expenditure,
+            'created' => true,
+            'has_expenditure' => true,
+        ], 'Expenditure recorded successfully', 201);
     }
 
     public function statistics(Request $request, $farm)
@@ -239,53 +397,52 @@ class FeedUsageController extends ApiController
             return;
         }
 
-        // Determine the feeding day from flock dates
-        $arrivalDate = Carbon::parse($flock->arrival_date);
-        $recordDate = Carbon::parse($usageDate);
-        $arrivalAgeDays = $flock->arrival_age_days ?? 0;
-        $daysSinceArrival = $arrivalDate->diffInDays($recordDate);
-        $feedingDay = $arrivalAgeDays + $daysSinceArrival + 1;
+        $feedingDay = FeedingDayService::feedingDayForDate($flock, $usageDate);
 
-        // Find the schedule item matching this feed type and feeding day
-        $scheduleItem = $schedule->items
-            ->where('feed_type_id', $feedTypeId)
-            ->where('feeding_day', $feedingDay)
-            ->first();
+        $batchSchedule->loadMissing('schedule.items');
+        $schedule = $batchSchedule->schedule;
+        if (!$schedule) {
+            return;
+        }
 
-        // If no exact day match, try just the feed type (for flexible schedules)
-        if (!$scheduleItem) {
+        $resolved = app(FeedingScheduleRangeService::class)->resolveForDay($schedule, $feedingDay);
+
+        // Prefer the range that matches both the day and the feed type used.
+        $scheduleItem = null;
+        if ($resolved && (int) $resolved->feed_type_id === (int) $feedTypeId) {
+            $scheduleItem = $resolved;
+        } else {
             $scheduleItem = $schedule->items
-                ->where('feed_type_id', $feedTypeId)
-                ->first();
+                ->first(fn ($item) => (int) $item->feed_type_id === (int) $feedTypeId && $item->coversDay($feedingDay));
         }
 
         if (!$scheduleItem) {
             return;
         }
 
-        // Calculate per-bird quantity (grams) from total usage (kg)
-        $flockQuantity = $flock->actual_quantity ?? $flock->quantity ?? 1;
-        $perBirdQuantity = $flockQuantity > 0 ? ($quantity * 1000) / $flockQuantity : $quantity;
+        $perBirdQuantity = FeedingDayService::perBirdGramsFromTotalKg((float) $quantity, $flock);
 
-        // Check if a batch schedule item already exists for this date
+        // One batch item per (batch schedule, date) — avoid duplicates when feed type differs.
         $existingItem = FeedingBatchScheduleItem::where('feeding_batch_schedule_id', $batchSchedule->id)
             ->whereDate('feeding_date', $usageDate)
-            ->where('feeding_schedule_item_id', $scheduleItem->id)
             ->first();
 
+        $totalKg = round((float) $quantity, 3);
+
         if ($existingItem) {
-            // Update the existing item with the new actual quantity
             $existingItem->update([
+                'feeding_schedule_item_id' => $scheduleItem->id,
                 'actual_quantity' => round($perBirdQuantity, 2),
+                'actual_total_kg' => $totalKg > 0 ? $totalKg : null,
                 'status' => 'completed',
             ]);
         } else {
-            // Create a new batch schedule item
             FeedingBatchScheduleItem::create([
                 'feeding_batch_schedule_id' => $batchSchedule->id,
                 'feeding_schedule_item_id' => $scheduleItem->id,
                 'actual_feeding_time' => $scheduleItem->feeding_times,
                 'actual_quantity' => round($perBirdQuantity, 2),
+                'actual_total_kg' => $totalKg > 0 ? $totalKg : null,
                 'feeding_date' => $usageDate,
                 'status' => 'completed',
             ]);

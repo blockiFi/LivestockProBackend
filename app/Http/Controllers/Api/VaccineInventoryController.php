@@ -413,7 +413,8 @@ class VaccineInventoryController extends ApiController
      */
     public function countries()
     {
-        $countries = Country::select('id', 'name', 'code')->get();
+        // Some installations don't have a `code` column on `countries`
+        $countries = Country::select('id', 'name')->get();
         return $this->sendResponse($countries, 'Countries retrieved successfully');
     }
 

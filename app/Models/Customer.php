@@ -15,7 +15,8 @@ class Customer extends Model
         'address',
         'city',
         'state',
-        'farm_id'
+        'farm_id',
+        'country_id',
     ];
 
     public function salesRecords(): HasMany

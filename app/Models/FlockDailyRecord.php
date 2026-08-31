@@ -22,6 +22,7 @@ class FlockDailyRecord extends Model
         'date',
         'age_days',
         'total_birds',
+        // Canonical columns
         'mortality_count',
         'culling_count',
         'average_weight_kg',
@@ -31,9 +32,21 @@ class FlockDailyRecord extends Model
         'egg_weight_grams',
         'temperature_celsius',
         'humidity_percentage',
+        // Legacy columns still read by the frontend
+        'mortality',
+        'culls',
+        'feed_consumed_kg',
+        'water_consumed_liters',
+        'avg_weight_grams',
+        'min_temperature',
+        'max_temperature',
+        'humidity',
+        'light_hours',
+        'eggs_collected',
+        'eggs_broken',
         'notes',
         'additional_data',
-        'recorded_by'
+        'recorded_by',
     ];
 
     /**
@@ -115,5 +128,36 @@ class FlockDailyRecord extends Model
     public function scopeDateRange($query, $startDate, $endDate)
     {
         return $query->whereBetween('date', [$startDate, $endDate]);
+    }
+
+    /**
+     * Map canonical + legacy columns to the field names the frontend reads.
+     */
+    public function toFrontendArray(): array
+    {
+        $data = $this->toArray();
+        $additional = is_array($this->additional_data) ? $this->additional_data : [];
+
+        $avgWeightGrams = $this->avg_weight_grams;
+        if (($avgWeightGrams === null || (float) $avgWeightGrams <= 0) && $this->average_weight_kg) {
+            $avgWeightGrams = (float) $this->average_weight_kg * 1000;
+        }
+
+        return array_merge($data, [
+            'mortality' => (int) ($this->mortality_count ?? $this->mortality ?? 0),
+            'culls' => (int) ($this->culling_count ?? $this->culls ?? 0),
+            'feed_consumed_kg' => (float) ($this->feed_consumption_kg ?? $this->feed_consumed_kg ?? 0),
+            'water_consumed_liters' => (float) ($this->water_consumption_liters ?? $this->water_consumed_liters ?? 0),
+            'avg_weight_grams' => $avgWeightGrams !== null ? (float) $avgWeightGrams : 0,
+            'min_weight_grams' => (float) ($additional['min_weight_grams'] ?? 0),
+            'max_weight_grams' => (float) ($additional['max_weight_grams'] ?? 0),
+            'sample_size' => (int) ($additional['sample_size'] ?? 0),
+            'humidity' => (float) ($this->humidity_percentage ?? $this->humidity ?? $additional['humidity'] ?? 0),
+            'min_temperature' => $additional['min_temperature'] ?? $this->min_temperature ?? $this->temperature_celsius,
+            'max_temperature' => $additional['max_temperature'] ?? $this->max_temperature ?? $this->temperature_celsius,
+            'light_hours' => $additional['light_hours'] ?? $this->light_hours,
+            'eggs_collected' => (int) ($this->egg_production_count ?? $this->eggs_collected ?? 0),
+            'eggs_broken' => (int) ($additional['eggs_broken'] ?? $this->eggs_broken ?? 0),
+        ]);
     }
 }

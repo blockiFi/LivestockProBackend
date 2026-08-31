@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Models\PoultryVaccinationRecord;
 use App\Models\PoultryVaccineInventory;
 use App\Models\Farm;
+use App\Models\Flock;
+use App\Models\FlockExpenditure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +41,11 @@ class PoultryVaccinationRecordController extends ApiController
         // Check if user has permission to create vaccination records for this farm
         if (!auth()->user()->can('create vaccination records', 'api', $farm->id)) {
             return $this->sendError('You do not have permission to create vaccination records for this farm', [], 403);
+        }
+
+        [$flock, $inactiveResponse] = $this->activeFlockForFarm((int) $request->flock_id, $farm->id);
+        if ($inactiveResponse) {
+            return $inactiveResponse;
         }
 
         try {
@@ -95,6 +102,9 @@ class PoultryVaccinationRecordController extends ApiController
             }
             
             $inventory->save();
+
+            // Auto-create flock expenditure record (if cost > 0)
+            FlockExpenditure::recordFromVaccination($vaccinationRecord);
 
             // Load relationships
             $vaccinationRecord->load([
@@ -200,6 +210,11 @@ class PoultryVaccinationRecordController extends ApiController
 
         $vaccinationRecord = PoultryVaccinationRecord::where('farm_id', $farmId)->findOrFail($id);
 
+        $flock = Flock::find($vaccinationRecord->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         try {
             DB::beginTransaction();
 
@@ -226,6 +241,9 @@ class PoultryVaccinationRecordController extends ApiController
             }
 
             $vaccinationRecord->update($updateData);
+
+            // Refresh expenditure record with latest cost (if any)
+            FlockExpenditure::recordFromVaccination($vaccinationRecord);
 
             // Load relationships
             $vaccinationRecord->load([
@@ -257,6 +275,11 @@ class PoultryVaccinationRecordController extends ApiController
 
         $vaccinationRecord = PoultryVaccinationRecord::where('farm_id', $farmId)->findOrFail($id);
 
+        $flock = Flock::find($vaccinationRecord->flock_id);
+        if ($flock && ($response = $this->ensureFlockIsActive($flock))) {
+            return $response;
+        }
+
         try {
             DB::beginTransaction();
 
@@ -287,6 +310,9 @@ class PoultryVaccinationRecordController extends ApiController
 
             // Delete the vaccination record
             $vaccinationRecord->delete();
+
+            // Remove linked expenditure (if any)
+            FlockExpenditure::deleteForSource('vaccination_record', $vaccinationRecord->id);
 
             DB::commit();
 

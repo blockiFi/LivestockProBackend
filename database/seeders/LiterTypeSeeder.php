@@ -13,8 +13,8 @@ class LiterTypeSeeder extends Seeder
      */
     public function run(): void
     {
-        // Clear existing liter types
-        DB::table('liter_types')->truncate();
+        // Some DB users lack privileges for TRUNCATE/DELETE.
+        // We intentionally avoid clearing the table so seeding still works.
 
         $literTypes = [
             [
