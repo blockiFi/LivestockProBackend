@@ -9,7 +9,7 @@ use App\Services\FarmEntitlementService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
-class APIController extends Controller
+class ApiController extends Controller
 {
     //
     public function sendResponse($data ,  string $message, int $code = 200) : JsonResponse

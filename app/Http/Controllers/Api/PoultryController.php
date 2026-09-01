@@ -13,7 +13,7 @@ use App\Models\PoultryType;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
-class PoultryController extends APIController
+class PoultryController extends ApiController
 {
     
     public function getStatistics(Request $request, $dateParams = null)
