@@ -7,6 +7,7 @@ use App\Models\Farm;
 use App\Services\Admin\AdminAuditService;
 use App\Services\Admin\AdminFarmService;
 use App\Services\FarmDashboardService;
+use App\Services\FarmDeletionService;
 use App\Traits\LogsAdminAction;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -20,6 +21,7 @@ class AdminFarmController extends ApiController
         private readonly AdminFarmService $farmService,
         private readonly AdminAuditService $auditService,
         private readonly FarmDashboardService $dashboardService,
+        private readonly FarmDeletionService $farmDeletionService,
     ) {
     }
 
@@ -54,12 +56,23 @@ class AdminFarmController extends ApiController
         return $this->sendResponse($updated, 'Farm updated');
     }
 
-    public function destroy(Request $request, Farm $farm): JsonResponse
+    public function destroy(Request $request, int $farm): JsonResponse
     {
-        $farm->delete();
-        $this->logAdminAction($request, 'farm.delete', 'farm', $farm->id);
+        $validated = $request->validate([
+            'confirmation' => 'required|string',
+        ]);
 
-        return $this->sendResponse(null, 'Farm deleted');
+        $farmModel = Farm::withTrashed()->findOrFail($farm);
+
+        if ($validated['confirmation'] !== $farmModel->name) {
+            return $this->sendError('Farm name confirmation does not match', [], 422);
+        }
+
+        $farmId = $farmModel->id;
+        $this->farmDeletionService->purge($farmModel);
+        $this->logAdminAction($request, 'farm.purge', 'farm', $farmId);
+
+        return $this->sendResponse(null, 'Farm and all related data deleted permanently');
     }
 
     public function restore(Request $request, int $farm): JsonResponse

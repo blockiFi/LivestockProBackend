@@ -51,10 +51,29 @@ class AdminFarmTest extends AdminTestCase
 
     public function test_admin_can_delete_farm(): void
     {
+        $farmId = $this->farm->id;
+        $farmName = $this->farm->name;
+
         $response = $this->withHeaders($this->adminHeaders())
-            ->deleteJson("/api/admin/farms/{$this->farm->id}");
+            ->deleteJson("/api/admin/farms/{$farmId}", ['confirmation' => $farmName]);
 
         $response->assertStatus(200);
-        $this->assertSoftDeleted('farms', ['id' => $this->farm->id]);
+        $this->assertDatabaseMissing('farms', ['id' => $farmId]);
+        $this->assertDatabaseMissing('farm_users', ['farm_id' => $farmId]);
+        $this->assertDatabaseHas('admin_audit_logs', [
+            'admin_user_id' => $this->admin->id,
+            'action' => 'farm.purge',
+            'resource_type' => 'farm',
+            'resource_id' => $farmId,
+        ]);
+    }
+
+    public function test_admin_farm_delete_requires_name_confirmation(): void
+    {
+        $response = $this->withHeaders($this->adminHeaders())
+            ->deleteJson("/api/admin/farms/{$this->farm->id}", ['confirmation' => 'wrong-name']);
+
+        $response->assertStatus(422);
+        $this->assertDatabaseHas('farms', ['id' => $this->farm->id]);
     }
 }

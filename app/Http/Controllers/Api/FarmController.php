@@ -12,6 +12,7 @@ use Illuminate\Validation\Rule;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\Models\Permission;
 use App\Http\Controllers\Api\ApiController;
+use App\Services\FarmDeletionService;
 use App\Services\FarmEntitlementService;
 use App\Traits\HasFarmPermissions;
 use App\Traits\RegisterEvents;
@@ -200,27 +201,8 @@ class FarmController extends ApiController
         if ($farm->logo) {
             Storage::disk('public')->delete($farm->logo);
         }
-        
-        // Delete all permissions associated with this farm
-        $farm->permissions()->delete();
-        
-        // Delete all roles associated with this farm
-        $farm->roles()->delete();
-        
-        // Delete all model_has_permissions entries for this farm
-        DB::table('model_has_permissions')
-            ->where('team_id', $farm->id)
-            ->delete();
-            
-        // Delete all model_has_roles entries for this farm
-        DB::table('model_has_roles')
-            ->where('team_id', $farm->id)
-            ->delete();
-            
-        // Delete all role_has_permissions entries for this farm
-        DB::table('role_has_permissions')
-            ->where('team_id', $farm->id)
-            ->delete();
+
+        app(FarmDeletionService::class)->cleanupSpatieTeamData($farm->id);
         $farm->delete();
 
         return $this->sendResponse(null, 'Farm deleted successfully');
