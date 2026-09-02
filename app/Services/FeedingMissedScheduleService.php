@@ -204,7 +204,9 @@ class FeedingMissedScheduleService
      * @return array{
      *   reverted_count: int,
      *   total_feed_kg: float,
-     *   inventory_restored_kg: float
+     *   inventory_restored_kg: float,
+     *   daily_records_deleted: int,
+     *   daily_records_updated: int
      * }
      */
     public function revertMissed(FeedingBatchSchedule $batch, Flock $flock, array $options = []): array
@@ -216,14 +218,27 @@ class FeedingMissedScheduleService
                 'reverted_count' => 0,
                 'total_feed_kg' => 0,
                 'inventory_restored_kg' => 0,
+                'daily_records_deleted' => 0,
+                'daily_records_updated' => 0,
             ];
         }
 
         $totalKg = 0.0;
         $restoredKg = 0.0;
         $reverted = 0;
+        $dailyRecordsDeleted = 0;
+        $dailyRecordsUpdated = 0;
 
-        DB::transaction(function () use ($batch, $flock, $revertible, &$totalKg, &$restoredKg, &$reverted) {
+        DB::transaction(function () use (
+            $batch,
+            $flock,
+            $revertible,
+            &$totalKg,
+            &$restoredKg,
+            &$reverted,
+            &$dailyRecordsDeleted,
+            &$dailyRecordsUpdated
+        ) {
             foreach ($revertible as $day) {
                 $item = FeedingBatchScheduleItem::where('feeding_batch_schedule_id', $batch->id)
                     ->where('id', $day['id'])
@@ -246,6 +261,18 @@ class FeedingMissedScheduleService
                     $restoredKg += $feedKg;
                 }
 
+                [$wasDeleted, $wasUpdated] = $this->dailyRecordFeedSync->revertFeedFromBulkBackfill(
+                    $flock,
+                    $day['feeding_date'],
+                    $feedKg
+                );
+
+                if ($wasDeleted) {
+                    $dailyRecordsDeleted++;
+                } elseif ($wasUpdated) {
+                    $dailyRecordsUpdated++;
+                }
+
                 $reverted++;
             }
         });
@@ -254,6 +281,8 @@ class FeedingMissedScheduleService
             'reverted_count' => $reverted,
             'total_feed_kg' => round($totalKg, 3),
             'inventory_restored_kg' => round($restoredKg, 3),
+            'daily_records_deleted' => $dailyRecordsDeleted,
+            'daily_records_updated' => $dailyRecordsUpdated,
         ];
     }
 

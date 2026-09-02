@@ -489,6 +489,65 @@ class FeedingMissedScheduleTest extends TestCase
         $this->assertEquals(0, FeedingBatchScheduleItem::where('feeding_batch_schedule_id', $batch->id)->count());
         $this->assertEquals(0, PoultryFeedUsage::where('flock_id', $flock->id)->count());
         $this->assertEquals(500, (float) $inventory->fresh()->quantity);
+        $this->assertEquals(4, $response->json('data.daily_records_deleted'));
+        $this->assertEquals(0, $response->json('data.daily_records_updated'));
+        $this->assertEquals(0, FlockDailyRecord::where('flock_id', $flock->id)->count());
+    }
+
+    public function test_revert_missed_clears_feed_on_preexisting_daily_records(): void
+    {
+        [$flock, $batch] = $this->createFlockOnDay(5);
+        $arrival = Carbon::parse($flock->arrival_date);
+
+        PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $this->feedType->id,
+            'quantity' => 500,
+            'unit_cost' => 2.5,
+            'status' => 'available',
+            'batch_number' => 'BATCH-REVERT-DR',
+        ]);
+
+        $existingDate = $arrival->copy()->addDays(1)->toDateString();
+        FlockDailyRecord::create([
+            'flock_id' => $flock->id,
+            'farm_id' => $this->farm->id,
+            'date' => $existingDate,
+            'age_days' => 1,
+            'total_birds' => 100,
+            'mortality_count' => 3,
+            'mortality' => 3,
+            'feed_consumption_kg' => 0,
+            'feed_consumed_kg' => 0,
+            'recorded_by' => $this->user->id,
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feeding/batch-schedules/{$batch->id}/implement-missed")
+            ->assertStatus(201);
+
+        $updated = FlockDailyRecord::where('flock_id', $flock->id)
+            ->whereDate('date', $existingDate)
+            ->first();
+        $this->assertEquals(4.0, (float) $updated->feed_consumption_kg);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feeding/batch-schedules/{$batch->id}/revert-missed")
+            ->assertStatus(200);
+
+        $this->assertEquals(4, $response->json('data.reverted_count'));
+        $this->assertEquals(3, $response->json('data.daily_records_deleted'));
+        $this->assertEquals(1, $response->json('data.daily_records_updated'));
+
+        $restored = FlockDailyRecord::where('flock_id', $flock->id)
+            ->whereDate('date', $existingDate)
+            ->first();
+
+        $this->assertNotNull($restored);
+        $this->assertEquals(3, $restored->mortality_count);
+        $this->assertEquals(0.0, (float) $restored->feed_consumption_kg);
+        $this->assertEquals(0.0, (float) $restored->feed_consumed_kg);
+        $this->assertEquals(1, FlockDailyRecord::where('flock_id', $flock->id)->count());
     }
 
     public function test_revert_missed_denied_without_create_permission(): void

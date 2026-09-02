@@ -55,4 +55,51 @@ class FlockDailyRecordFeedSyncService
 
         return [$record, true];
     }
+
+    /**
+     * Undo flock daily record feed changes from a reverted bulk feeding backfill.
+     *
+     * @return array{0: bool, 1: bool} whether the record was deleted or feed fields were cleared
+     */
+    public function revertFeedFromBulkBackfill(Flock $flock, string $date, float $feedKg): array
+    {
+        $recordDate = Carbon::parse($date)->toDateString();
+
+        $record = FlockDailyRecord::where('flock_id', $flock->id)
+            ->whereDate('date', $recordDate)
+            ->first();
+
+        if (!$record) {
+            return [false, false];
+        }
+
+        if ($this->wasCreatedByBulkBackfill($record)) {
+            $record->delete();
+
+            return [true, false];
+        }
+
+        $currentFeed = (float) ($record->feed_consumption_kg ?? $record->feed_consumed_kg ?? 0);
+        $backfillFeedKg = round(max(0, $feedKg), 3);
+
+        if ($backfillFeedKg <= 0 && $currentFeed <= 0) {
+            return [false, false];
+        }
+
+        $newFeed = max(0, round($currentFeed - $backfillFeedKg, 3));
+
+        $record->update([
+            'feed_consumption_kg' => $newFeed,
+            'feed_consumed_kg' => $newFeed,
+        ]);
+
+        return [false, true];
+    }
+
+    private function wasCreatedByBulkBackfill(FlockDailyRecord $record): bool
+    {
+        $notes = trim((string) ($record->notes ?? ''));
+
+        return $notes === self::BULK_BACKFILL_NOTE;
+    }
 }
