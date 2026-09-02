@@ -21,6 +21,7 @@ use App\Models\Role;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
 class FeedingMissedScheduleTest extends TestCase
@@ -83,6 +84,7 @@ class FeedingMissedScheduleTest extends TestCase
         ]);
         $ownerRole->givePermissionTo($permissions);
         $this->farm->users()->attach($this->user->id);
+        app(PermissionRegistrar::class)->setPermissionsTeamId($this->farm->id);
         $this->user->assignRole($ownerRole);
 
         $this->poultryType = PoultryType::factory()->create(['name' => 'Broiler']);
@@ -183,6 +185,48 @@ class FeedingMissedScheduleTest extends TestCase
         $this->assertEquals(7, $response->json('data.count'));
         $this->assertCount(7, $response->json('data.missed_days'));
         $this->assertIsArray($response->json('data.inventory_requirements'));
+    }
+
+    public function test_missed_days_start_from_flock_arrival_when_template_begins_later(): void
+    {
+        $flockStage = FlockStage::factory()->create(['poultry_type_id' => $this->poultryType->id]);
+        $house = PoultryHouse::factory()->create([
+            'farm_id' => $this->farm->id,
+            'poultry_type_id' => $this->poultryType->id,
+        ]);
+
+        $arrival = Carbon::today()->subDays(119)->toDateString();
+
+        $flock = Flock::factory()->create([
+            'farm_id' => $this->farm->id,
+            'house_id' => $house->id,
+            'poultry_type_id' => $this->poultryType->id,
+            'flock_stage_id' => $flockStage->id,
+            'quantity' => 100,
+            'arrival_date' => $arrival,
+            'status' => 'active',
+        ]);
+
+        $schedule = $this->makeSchedule([
+            ['start_day' => 91, 'end_day' => null, 'quantity' => 50],
+        ]);
+
+        $batch = FeedingBatchSchedule::create([
+            'farm_id' => $this->farm->id,
+            'flock_id' => $flock->id,
+            'feeding_schedule_id' => $schedule->id,
+            'status' => 'in_progress',
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->getJson("/api/farms/{$this->farm->id}/feeding/batch-schedules/{$batch->id}/missed-days")
+            ->assertStatus(200);
+
+        $this->assertEquals(119, $response->json('data.count'));
+        $first = $response->json('data.missed_days.0');
+        $this->assertEquals(1, $first['feeding_day']);
+        $this->assertEquals($arrival, $first['feeding_date']);
+        $this->assertEquals(50, $first['planned_quantity']);
     }
 
     public function test_implement_missed_creates_late_items_and_deducts_inventory(): void

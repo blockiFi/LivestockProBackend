@@ -43,6 +43,55 @@ class FeedingScheduleRangeService
     }
 
     /**
+     * Resolve a schedule item for missed-feeding backfill.
+     * Uses the normal range match when possible; otherwise falls back so every
+     * placement day from flock arrival can be backfilled (earliest range before
+     * the first start_day, previous range in gaps, last range after a closed end).
+     */
+    public function resolveForMissedBackfillDay(FeedingSchedule $schedule, int $day): ?FeedingScheduleItem
+    {
+        $resolved = $this->resolveForDay($schedule, $day);
+        if ($resolved !== null) {
+            return $resolved;
+        }
+
+        $items = ($schedule->relationLoaded('items')
+            ? $schedule->items
+            : $schedule->items()->get()
+        )->sortBy([
+            ['start_day', 'asc'],
+            ['id', 'asc'],
+        ])->values();
+
+        if ($items->isEmpty()) {
+            return null;
+        }
+
+        /** @var FeedingScheduleItem $earliest */
+        $earliest = $items->first();
+        if ($day < (int) $earliest->start_day) {
+            return $earliest;
+        }
+
+        $previous = null;
+        foreach ($items as $item) {
+            $start = (int) $item->start_day;
+            if ($day < $start) {
+                return $previous ?? $earliest;
+            }
+
+            $end = $item->end_day !== null ? (int) $item->end_day : PHP_INT_MAX;
+            if ($day <= $end) {
+                return $item;
+            }
+
+            $previous = $item;
+        }
+
+        return $previous ?? $earliest;
+    }
+
+    /**
      * Validate a set of ranges for a schedule.
      *
      * @param  list<array{start_day:int,end_day:?int,id?:int|null}>  $ranges

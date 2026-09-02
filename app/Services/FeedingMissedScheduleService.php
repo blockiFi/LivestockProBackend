@@ -340,13 +340,14 @@ class FeedingMissedScheduleService
         $today = Carbon::today();
         $currentFeedingDay = FeedingDayService::feedingDayForDate($flock, $today->toDateString());
 
+        // Always anchor to flock placement day 1 (arrival), not schedule template dates.
         $fromDay = max(1, (int) ($options['from_day'] ?? 1));
         $throughDay = min(
-            $currentFeedingDay - 1,
-            (int) ($options['through_day'] ?? $currentFeedingDay - 1)
+            max(0, $currentFeedingDay - 1),
+            (int) ($options['through_day'] ?? max(0, $currentFeedingDay - 1))
         );
 
-        if ($throughDay < $fromDay) {
+        if ($throughDay < $fromDay || $currentFeedingDay <= 1) {
             return [];
         }
 
@@ -359,7 +360,7 @@ class FeedingMissedScheduleService
         $missed = [];
 
         for ($day = $fromDay; $day <= $throughDay; $day++) {
-            $scheduleItem = $this->rangeService->resolveForDay($batch->schedule, $day);
+            $scheduleItem = $this->rangeService->resolveForMissedBackfillDay($batch->schedule, $day);
 
             if (!$scheduleItem) {
                 continue;
