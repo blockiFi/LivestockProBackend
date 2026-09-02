@@ -30,10 +30,14 @@ class DatabaseSeeder extends Seeder
          * For rich demo data, delegate to ApplicationDemoSeeder,
          * which wipes and reseeds core tables in a consistent way.
          *
+         * For a single focused layer farm demo:
+         *   php artisan db:seed --class=LayerDemoFarmSeeder
+         *
          * NOTE: Use this only in development / demo environments.
          */
         $this->call([
             ApplicationDemoSeeder::class,
+            // LayerDemoFarmSeeder::class,
         ]);
     }
 }
