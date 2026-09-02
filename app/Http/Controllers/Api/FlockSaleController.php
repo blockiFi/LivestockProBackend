@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
 use App\Models\Flock;
 use App\Models\FlockSale;
+use App\Services\CustomerResolver;
 use App\Services\FlockSaleCullingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -22,8 +23,13 @@ class FlockSaleController extends ApiController
             return $this->sendUnauthorizedError('Unauthorized to view flock sales');
         }
 
-        $query = FlockSale::where('farm_id', $farmId)
+        $query = FlockSale::with(['customer:id,name,phone', 'flock:id,name,batch_number'])
+            ->where('farm_id', $farmId)
             ->where('flock_id', $flockId);
+
+        if ($request->filled('customer_id')) {
+            $query->where('customer_id', $request->customer_id);
+        }
 
         if ($request->filled('date_from')) {
             $query->whereDate('date', '>=', $request->date_from);
@@ -55,6 +61,7 @@ class FlockSaleController extends ApiController
             'quantity' => 'required|integer|min:1',
             'unit_price' => 'required|numeric|min:0',
             'date' => 'required|date',
+            'customer_id' => 'nullable|exists:customers,id',
             'customer_name' => 'nullable|string|max:255',
             'customer_phone' => 'nullable|string|max:50',
             'notes' => 'nullable|string|max:1000',
@@ -62,6 +69,18 @@ class FlockSaleController extends ApiController
 
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $customerFields = CustomerResolver::resolveForFarm(
+            $farm,
+            $request->input('customer_id'),
+            $request->input('customer_name'),
+            $request->input('customer_phone')
+        );
+        if ($customerFields === null) {
+            return $this->sendValidationError('Validation failed', [
+                'customer_id' => ['Customer does not belong to this farm.'],
+            ]);
         }
 
         $quantity = (int) $request->quantity;
@@ -88,13 +107,14 @@ class FlockSaleController extends ApiController
 
                 $sale = FlockSale::create([
                     'farm_id' => $farm->id,
+                    'customer_id' => $customerFields['customer_id'],
                     'flock_id' => $flock->id,
                     'quantity' => $quantity,
                     'unit_price' => $unitPrice,
                     'total_amount' => $totalAmount,
                     'date' => $request->date,
-                    'customer_name' => $request->customer_name,
-                    'customer_phone' => $request->customer_phone,
+                    'customer_name' => $customerFields['customer_name'],
+                    'customer_phone' => $customerFields['customer_phone'],
                     'notes' => $request->notes,
                     'daily_record_id' => $dailyRecordId,
                     'culls_applied' => $cullsApplied,
@@ -137,6 +157,7 @@ class FlockSaleController extends ApiController
             'quantity' => 'sometimes|required|integer|min:1',
             'unit_price' => 'sometimes|required|numeric|min:0',
             'date' => 'sometimes|required|date',
+            'customer_id' => 'nullable|exists:customers,id',
             'customer_name' => 'nullable|string|max:255',
             'customer_phone' => 'nullable|string|max:50',
             'notes' => 'nullable|string|max:1000',
@@ -144,6 +165,18 @@ class FlockSaleController extends ApiController
 
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $customerFields = CustomerResolver::resolveForFarm(
+            $farm,
+            $request->has('customer_id') ? $request->input('customer_id') : $sale->customer_id,
+            $request->has('customer_name') ? $request->input('customer_name') : $sale->customer_name,
+            $request->has('customer_phone') ? $request->input('customer_phone') : $sale->customer_phone
+        );
+        if ($customerFields === null) {
+            return $this->sendValidationError('Validation failed', [
+                'customer_id' => ['Customer does not belong to this farm.'],
+            ]);
         }
 
         $newQuantity = $request->has('quantity') ? (int) $request->quantity : (int) $sale->quantity;
@@ -175,8 +208,9 @@ class FlockSaleController extends ApiController
                     'unit_price' => $newUnitPrice,
                     'total_amount' => round($newQuantity * $newUnitPrice, 2),
                     'date' => $newDate,
-                    'customer_name' => $request->has('customer_name') ? $request->customer_name : $sale->customer_name,
-                    'customer_phone' => $request->has('customer_phone') ? $request->customer_phone : $sale->customer_phone,
+                    'customer_id' => $customerFields['customer_id'],
+                    'customer_name' => $customerFields['customer_name'],
+                    'customer_phone' => $customerFields['customer_phone'],
                     'notes' => $request->has('notes') ? $request->notes : $sale->notes,
                     'daily_record_id' => $dailyRecordId,
                     'culls_applied' => $cullsApplied,

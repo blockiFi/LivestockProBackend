@@ -24,10 +24,7 @@ class PoultryFlockEggReport extends Model
         'bird_count',
         'notes',
         'date',
-        'report_date',
         'recorded_by',
-        'created_by',
-        'updated_by',
     ];
 
     /**
@@ -36,7 +33,7 @@ class PoultryFlockEggReport extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'report_date' => 'date',
+        'date' => 'date',
         'average_egg_weight' => 'decimal:2',
         'production_percentage' => 'decimal:2',
     ];
@@ -62,7 +59,7 @@ class PoultryFlockEggReport extends Model
      */
     public function creator()
     {
-        return $this->belongsTo(User::class, 'created_by');
+        return $this->belongsTo(User::class, 'recorded_by');
     }
 
     /**
@@ -70,7 +67,7 @@ class PoultryFlockEggReport extends Model
      */
     public function updater()
     {
-        return $this->belongsTo(User::class, 'updated_by');
+        return $this->belongsTo(User::class, 'recorded_by');
     }
 
     /**
@@ -94,7 +91,7 @@ class PoultryFlockEggReport extends Model
      */
     public function scopeDateRange($query, $startDate, $endDate)
     {
-        return $query->whereBetween('report_date', [$startDate, $endDate]);
+        return $query->whereBetween('date', [$startDate, $endDate]);
     }
 
     /**
@@ -122,8 +119,8 @@ class PoultryFlockEggReport extends Model
     public function calculateProductionTrend()
     {
         $previousReport = static::where('flock_id', $this->flock_id)
-            ->where('report_date', '<', $this->report_date)
-            ->orderBy('report_date', 'desc')
+            ->where('date', '<', $this->date)
+            ->orderBy('date', 'desc')
             ->first();
 
         if (!$previousReport) {

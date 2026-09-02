@@ -118,9 +118,21 @@ class BatchScheduleItemController extends ApiController
             'poultry_medication_id' => $scheduleType === 'medication' ? $request->poultry_medication_id : null,
         ];
 
-        $item = DB::transaction(function () use ($payload, $scheduleType, $request) {
-            $item = BatchScheduleItem::create($payload);
-            $item->load(['batchSchedule', 'scheduleItem']);
+        $existing = BatchScheduleItem::where('batch_schedule_id', $request->batch_schedule_id)
+            ->where('schedule_item_id', $request->schedule_item_id)
+            ->whereDate('scheduled_date', $request->scheduled_date)
+            ->where('status', 'scheduled')
+            ->first();
+
+        $item = DB::transaction(function () use ($payload, $scheduleType, $request, $existing) {
+            if ($existing) {
+                $existing->update($payload);
+                $item = $existing->fresh(['batchSchedule', 'scheduleItem']);
+            } else {
+                $item = BatchScheduleItem::create($payload);
+                $item->load(['batchSchedule', 'scheduleItem']);
+            }
+
             FlockExpenditure::recordFromBatchScheduleItem($item, $scheduleType, $request->user()->id);
 
             return $item;
@@ -128,8 +140,8 @@ class BatchScheduleItemController extends ApiController
 
         return $this->sendResponse(
             $item,
-            'Batch schedule item created successfully',
-            201
+            $existing ? 'Batch schedule item updated successfully' : 'Batch schedule item created successfully',
+            $existing ? 200 : 201
         );
     }
 

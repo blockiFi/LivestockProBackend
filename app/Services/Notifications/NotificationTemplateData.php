@@ -47,7 +47,7 @@ class NotificationTemplateData
             'timestamp' => $this->formatDateTime($notification->created_at, $timezone),
             'timezone' => $timezone,
             'action_url' => $this->absoluteUrl($notification->action_url),
-            'action_label' => $notification->action_label ?: 'Open in LiveStock Pro',
+            'action_label' => $notification->action_label ?: 'Open in Farm Central',
             'app_name' => config('app.name'),
             'app_url' => config('notifications.frontend_url'),
         ];

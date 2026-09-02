@@ -104,6 +104,7 @@
     </table>
 
     <div class="footer">
+        Farm Central &middot; Smart Livestock Command Center<br>
         You are receiving this because of your notification preferences for {{ $farm_name }}.<br>
         <a href="{{ $app_url }}/dashboard/settings/notifications" style="color: #64748b;">Manage notification preferences</a>
     </div>

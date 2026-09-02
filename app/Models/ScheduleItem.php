@@ -11,6 +11,8 @@ class ScheduleItem extends Model
     protected $fillable = [
         'schedule_id',
         'age_days',
+        'is_recurring',
+        'interval_days',
         'poultry_vaccine_id',
         'poultry_medication_id',
         'name',
@@ -19,6 +21,11 @@ class ScheduleItem extends Model
         'withdrawal_period_days',
         'storage_instructions',
         'description',
+    ];
+
+    protected $casts = [
+        'is_recurring' => 'boolean',
+        'interval_days' => 'integer',
     ];
 
     public function schedule(): BelongsTo

@@ -9,6 +9,36 @@ use Illuminate\Support\Facades\Validator;
 
 class ScheduleController extends ApiController
 {
+    private function resolveFarmId(mixed $farm): ?int
+    {
+        if ($farm instanceof \App\Models\Farm) {
+            return $farm->id;
+        }
+
+        return $farm !== null ? (int) $farm : null;
+    }
+
+    private function findScopedSchedule(mixed $farm, string $type, mixed $id): Schedule
+    {
+        if (! in_array($type, ['medication', 'vaccination'], true)) {
+            abort(422, 'Invalid type. Type must be either medication or vaccination.');
+        }
+
+        $farmId = $this->resolveFarmId($farm);
+        $scheduleId = $id instanceof Schedule ? $id->id : (int) $id;
+
+        return Schedule::with(['items', 'batchSchedules', 'farm'])
+            ->where('id', $scheduleId)
+            ->where('schedule_type', $type)
+            ->where(function ($query) use ($farmId) {
+                $query->where('type', 'default');
+                if ($farmId) {
+                    $query->orWhere('farm_id', $farmId);
+                }
+            })
+            ->firstOrFail();
+    }
+
     public function index($paginated = null)
     {
         $farmId = request()->route('farm') ?? request('farm_id');
@@ -84,32 +114,25 @@ class ScheduleController extends ApiController
         return $this->sendResponse($schedule, 'Schedule created successfully', 201);
     }
 
-    public function show($id)
+    public function show($farm, string $type, $id)
     {
-        $schedule = Schedule::with(['items', 'batchSchedules', 'farm'])->findOrFail($id);
+        $schedule = $this->findScopedSchedule($farm, $type, $id);
         $farmId = $schedule->farm_id;
-        // Allow access if it's a default schedule (type = 'default'), otherwise check permission
+        if ($schedule->type !== 'default' && $farmId && ! auth()->user()->can('view schedules', 'api', $farmId)) {
+            return $this->sendUnauthorizedError('You do not have permission to view this schedule');
+        }
 
-        if ($schedule->type !== 'default' && $farmId && !auth()->user()->can('view schedules', 'api', $farmId)) {
-            return $this->sendUnauthorizedError('You do not have permission to view this schedule');
-        }
-        $schedule = Schedule::with(['items', 'farm'])->findOrFail($id);
-        $farmId = $schedule->farm_id;
-        if ($farmId && !auth()->user()->can('view schedules', 'api', $farmId)) {
-            return $this->sendUnauthorizedError('You do not have permission to view this schedule');
-        }
-        return $this->sendResponse($schedule, 'Schedule retrieved successfully');
+        return $this->sendResponse($schedule->load(['items', 'farm']), 'Schedule retrieved successfully');
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, $farm, string $type, $id)
     {
-        $schedule = Schedule::findOrFail($id);
+        $schedule = $this->findScopedSchedule($farm, $type, $id);
         if ($schedule->type === 'default') {
             return $this->sendUnauthorizedError('Default schedules cannot be updated');
         }
-        $schedule = Schedule::findOrFail($id);
         $farmId = $schedule->farm_id;
-        if ($farmId && !auth()->user()->can('update schedules', 'api', $farmId)) {
+        if ($farmId && ! auth()->user()->can('update schedules', 'api', $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to update this schedule');
         }
         $validator = Validator::make($request->all(), [
@@ -127,15 +150,14 @@ class ScheduleController extends ApiController
         return $this->sendResponse($schedule, 'Schedule updated successfully');
     }
 
-    public function destroy($id)
+    public function destroy($farm, string $type, $id)
     {
-        $schedule = Schedule::findOrFail($id);
+        $schedule = $this->findScopedSchedule($farm, $type, $id);
         if ($schedule->type === 'default') {
             return $this->sendUnauthorizedError('Default schedules cannot be deleted');
         }
-        $schedule = Schedule::findOrFail($id);
         $farmId = $schedule->farm_id;
-        if ($farmId && !auth()->user()->can('delete schedules', 'api', $farmId)) {
+        if ($farmId && ! auth()->user()->can('delete schedules', 'api', $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to delete this schedule');
         }
         $schedule->delete();

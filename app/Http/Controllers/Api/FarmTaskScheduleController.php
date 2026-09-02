@@ -79,6 +79,12 @@ class FarmTaskScheduleController extends ApiController
             ]);
         }
 
+        if (!empty($data['flock_id']) && !$this->flockBelongsToFarm($farm, (int) $data['flock_id'])) {
+            return $this->sendValidationError('Validation failed', [
+                'flock_id' => ['The selected flock does not belong to this farm'],
+            ]);
+        }
+
         $schedule = DB::transaction(function () use ($farm, $data, $assigneeIds, $request) {
             $schedule = FarmTaskSchedule::create(array_merge($data, [
                 'farm_id' => $farm->id,
@@ -172,6 +178,12 @@ class FarmTaskScheduleController extends ApiController
         if ($assigneeIds !== null && !$this->assigneesBelongToFarm($farm, $assigneeIds)) {
             return $this->sendValidationError('Validation failed', [
                 'assignee_ids' => ['All assignees must be members of this farm'],
+            ]);
+        }
+
+        if (array_key_exists('flock_id', $data) && !empty($data['flock_id']) && !$this->flockBelongsToFarm($farm, (int) $data['flock_id'])) {
+            return $this->sendValidationError('Validation failed', [
+                'flock_id' => ['The selected flock does not belong to this farm'],
             ]);
         }
 
@@ -468,6 +480,11 @@ class FarmTaskScheduleController extends ApiController
         return $count === count(array_unique($ids));
     }
 
+    protected function flockBelongsToFarm(Farm $farm, int $flockId): bool
+    {
+        return $farm->flocks()->whereKey($flockId)->exists();
+    }
+
     protected function rules(bool $required = true): array
     {
         $req = $required ? 'required' : 'sometimes';
@@ -497,6 +514,7 @@ class FarmTaskScheduleController extends ApiController
             'reminders' => 'nullable|array|max:5',
             'reminders.*' => 'integer|min:0|max:10080',
             'animal_group' => 'nullable|string|max:255',
+            'flock_id' => 'nullable|integer|exists:flocks,id',
             'medication_name' => 'nullable|string|max:255',
             'dosage_instructions' => 'nullable|string',
             'require_completion_confirmation' => 'nullable|boolean',

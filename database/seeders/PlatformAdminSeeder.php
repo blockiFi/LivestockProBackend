@@ -10,7 +10,7 @@ class PlatformAdminSeeder extends Seeder
 {
     public function run(): void
     {
-        $email = env('PLATFORM_ADMIN_EMAIL', 'admin@livestockpro.com');
+        $email = env('PLATFORM_ADMIN_EMAIL', 'admin@farmcentral.com');
         $password = env('PLATFORM_ADMIN_PASSWORD', 'password');
 
         User::updateOrCreate(

@@ -75,6 +75,9 @@ class FarmTaskInstanceController extends ApiController
         if ($request->boolean('medication_only')) {
             $query->where('section', 'medication');
         }
+        if ($request->filled('flock_id')) {
+            $query->where('flock_id', (int) $request->flock_id);
+        }
         if ($request->filled('search')) {
             $s = $request->search;
             $query->where(function ($q) use ($s) {

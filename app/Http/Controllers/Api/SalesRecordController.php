@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
 use App\Models\Flock;
 use App\Models\SalesRecord;
+use App\Services\CustomerResolver;
 use App\Services\SalesProfitLossService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -108,6 +109,18 @@ class SalesRecordController extends ApiController
         $quantity = round((float) $request->input('quantity'), 2);
         $unitPrice = round((float) $request->input('unit_price'), 2);
 
+        $customerFields = CustomerResolver::resolveForFarm(
+            $farm,
+            $request->input('customer_id'),
+            $request->input('customer_name'),
+            $request->input('customer_phone')
+        );
+        if ($customerFields === null) {
+            return $this->sendValidationError('Validation failed', [
+                'customer_id' => ['Customer does not belong to this farm.'],
+            ]);
+        }
+
         $record = SalesRecord::create([
             'farm_id' => $farmId,
             'flock_id' => $flockId,
@@ -116,9 +129,9 @@ class SalesRecordController extends ApiController
             'unit_price' => $unitPrice,
             'total_amount' => round($quantity * $unitPrice, 2),
             'date' => $request->input('date'),
-            'customer_id' => $request->input('customer_id'),
-            'customer_name' => $request->input('customer_name'),
-            'customer_phone' => $request->input('customer_phone'),
+            'customer_id' => $customerFields['customer_id'],
+            'customer_name' => $customerFields['customer_name'],
+            'customer_phone' => $customerFields['customer_phone'],
             'payment_method' => $request->input('payment_method'),
             'payment_status' => $request->input('payment_status', 'paid'),
             'notes' => $request->input('notes'),
@@ -190,6 +203,18 @@ class SalesRecordController extends ApiController
             }
         }
 
+        $customerFields = CustomerResolver::resolveForFarm(
+            $farm,
+            $request->has('customer_id') ? $request->input('customer_id') : $record->customer_id,
+            $request->has('customer_name') ? $request->input('customer_name') : $record->customer_name,
+            $request->has('customer_phone') ? $request->input('customer_phone') : $record->customer_phone
+        );
+        if ($customerFields === null) {
+            return $this->sendValidationError('Validation failed', [
+                'customer_id' => ['Customer does not belong to this farm.'],
+            ]);
+        }
+
         $record->fill([
             'type' => $type,
             'flock_id' => $flockId,
@@ -197,9 +222,9 @@ class SalesRecordController extends ApiController
             'unit_price' => $unitPrice,
             'total_amount' => round($quantity * $unitPrice, 2),
             'date' => $date,
-            'customer_id' => $request->has('customer_id') ? $request->input('customer_id') : $record->customer_id,
-            'customer_name' => $request->has('customer_name') ? $request->input('customer_name') : $record->customer_name,
-            'customer_phone' => $request->has('customer_phone') ? $request->input('customer_phone') : $record->customer_phone,
+            'customer_id' => $customerFields['customer_id'],
+            'customer_name' => $customerFields['customer_name'],
+            'customer_phone' => $customerFields['customer_phone'],
             'payment_method' => $request->has('payment_method') ? $request->input('payment_method') : $record->payment_method,
             'payment_status' => $request->input('payment_status', $record->payment_status),
             'notes' => $request->has('notes') ? $request->input('notes') : $record->notes,

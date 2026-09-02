@@ -51,6 +51,7 @@ use App\Http\Controllers\Api\AdministrationMethodController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\FlockMetricsAnalysisController;
 use App\Http\Controllers\Api\FlockNotificationController;
+use App\Http\Controllers\Api\FlockActivityReportController;
 use App\Http\Controllers\Api\FlockTransferController;
 use App\Http\Controllers\Api\LiterTypeController;
 use App\Http\Controllers\Api\UserProfileController;
@@ -185,6 +186,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{flock}/metrics/comparative', [FlockMetricsAnalysisController::class, 'refreshComparative'])->middleware('farm.ai');
             Route::get('/{flock}/actual-quantity', [FlockController::class, 'getActualQuantity']);
             Route::get('/{flock}/notifications', [FlockNotificationController::class, 'index']);
+            Route::get('/{flock}/activities', [FlockActivityReportController::class, 'index']);
 
             // Multi-pen allocations & transfer history
             Route::get('/{flock}/allocations', [FlockTransferController::class, 'allocations']);
@@ -255,7 +257,14 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('/{record}', [SalesRecordController::class, 'destroy']);
         });
 
-        Route::get('farms/{farm}/customers', [CustomerController::class, 'index']);
+        Route::prefix('farms/{farm}/customers')->group(function () {
+            Route::get('/', [CustomerController::class, 'index']);
+            Route::post('/', [CustomerController::class, 'store']);
+            Route::get('/{customer}', [CustomerController::class, 'show']);
+            Route::put('/{customer}', [CustomerController::class, 'update']);
+            Route::delete('/{customer}', [CustomerController::class, 'destroy']);
+            Route::get('/{customer}/history', [CustomerController::class, 'history']);
+        });
 
     
 
@@ -473,9 +482,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('farms/{farm}/feeding')->group(function () {
         Route::get('schedules', [FeedingScheduleController::class, 'index']);
         Route::post('schedules', [FeedingScheduleController::class, 'store']);
-        Route::get('schedules/{schedule}', [FeedingScheduleController::class, 'show']);
-        Route::put('schedules/{schedule}', [FeedingScheduleController::class, 'update']);
-        Route::delete('schedules/{schedule}', [FeedingScheduleController::class, 'destroy']);
+        Route::get('schedules/{id}', [FeedingScheduleController::class, 'show']);
+        Route::put('schedules/{id}', [FeedingScheduleController::class, 'update']);
+        Route::delete('schedules/{id}', [FeedingScheduleController::class, 'destroy']);
         Route::post('schedule-items/{id}/split', [FeedingScheduleItemController::class, 'split']);
         Route::apiResource('schedule-items', FeedingScheduleItemController::class);
         // Custom flock route must be registered before apiResource so "flock" is not treated as an ID.
@@ -493,9 +502,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('schedules', [ScheduleController::class, 'index']);
         Route::get('schedules/paginated', [ScheduleController::class, 'index'])->defaults('paginated', true);
         Route::post('schedules', [ScheduleController::class, 'store']);
-        Route::get('schedules/{schedule}', [ScheduleController::class, 'show']);
-        Route::put('schedules/{schedule}', [ScheduleController::class, 'update']);
-        Route::delete('schedules/{schedule}', [ScheduleController::class, 'destroy']);
+        Route::get('schedules/{id}', [ScheduleController::class, 'show']);
+        Route::put('schedules/{id}', [ScheduleController::class, 'update']);
+        Route::delete('schedules/{id}', [ScheduleController::class, 'destroy']);
         Route::apiResource('schedule-items', ScheduleItemController::class);
         Route::apiResource('batch-schedules', BatchScheduleController::class);
         Route::apiResource('batch-schedule-items', BatchScheduleItemController::class);

@@ -29,12 +29,15 @@ class PermissionSeeder extends Seeder
             'manage feed inventory', 'manage inventory', 'manage medication inventory', 'manage vaccine inventory', 'view feed inventory', 'view inventory', 'view medication inventory', 'view vaccine inventory',
             // Schedule Management
             'create schedules', 'delete schedules', 'manage schedules', 'update schedules', 'view schedules',
+            'create schedule items', 'delete schedule items', 'update schedule items', 'view schedule items',
             // Record Management
             'create records', 'delete records', 'manage records', 'manage mortality records', 'manage weight records', 'manage egg records', 'update records', 'view egg records', 'view mortality records', 'view records', 'view weight records',
             // Customer Management
             'create customers', 'delete customers', 'manage customers', 'update customers', 'view customers',
             // Sales Management
             'create sales', 'delete sales', 'manage sales', 'update sales', 'view sales',
+            // Invoice Management
+            'create invoices', 'delete invoices', 'update invoices', 'view invoices',
             // Medication Management (from controllers)
             'create medications', 'delete medications', 'update medications', 'view medications',
             // Medication Record Management

@@ -3,8 +3,8 @@
 namespace App\Traits;
 
 use App\Models\Farm;
-use Spatie\Permission\Models\Role;
 use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
 trait ManagesFarmRoles
@@ -12,85 +12,19 @@ trait ManagesFarmRoles
     /**
      * Map high-level farm roles to permission names.
      *
-     * @return array<string,array<int,string>>
+     * @return array<string, array<int, string>>
      */
     protected function getRolesAndPermissions(): array
     {
+        return $this->getDefaultRolePermissionsMap();
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function getAllFarmPermissions(): array
+    {
         return [
-            'owner' => [
-                'view farm', 'update farm', 'delete farm', 'manage farm settings', 'manage users', 'manage billing',
-                'view statistics', 'manage poultry houses', 'view flocks', 'update flocks', 'delete flock', 'manage flocks',
-                'manage inventory', 'manage schedules',
-                'view schedules', 'create schedules', 'update schedules', 'delete schedules',
-                'view feeding schedules', 'create feeding schedules', 'update feeding schedules', 'delete feeding schedules',
-                'view feeding schedule items', 'create feeding schedule items', 'update feeding schedule items', 'delete feeding schedule items',
-                'view feeding batch schedules', 'create feeding batch schedules', 'update feeding batch schedules', 'delete feeding batch schedules',
-                'view feeding batch schedule items', 'create feeding batch schedule items', 'update feeding batch schedule items', 'delete feeding batch schedule items',
-                'view batch schedules', 'create batch schedules', 'update batch schedules', 'delete batch schedules',
-                'manage sales',
-                'view poultry types', 'manage poultry types',
-                'view flock stages', 'manage flock stages',
-                'view farm tasks', 'manage farm tasks', 'complete farm tasks', 'approve farm tasks',
-            ],
-            'manager' => [
-                'view farm', 'update farm', 'manage farm settings', 'manage users',
-                'view statistics', 'manage poultry houses', 'view flocks', 'update flocks', 'manage flocks',
-                'manage inventory', 'manage schedules',
-                'view schedules', 'create schedules', 'update schedules', 'delete schedules',
-                'view feeding schedules', 'create feeding schedules', 'update feeding schedules', 'delete feeding schedules',
-                'view feeding schedule items', 'create feeding schedule items', 'update feeding schedule items', 'delete feeding schedule items',
-                'view feeding batch schedules', 'create feeding batch schedules', 'update feeding batch schedules', 'delete feeding batch schedules',
-                'view feeding batch schedule items', 'create feeding batch schedule items', 'update feeding batch schedule items', 'delete feeding batch schedule items',
-                'view batch schedules', 'create batch schedules', 'update batch schedules', 'delete batch schedules',
-                'manage sales',
-                'view poultry types', 'manage poultry types',
-                'view flock stages', 'manage flock stages',
-                'view farm tasks', 'manage farm tasks', 'complete farm tasks', 'approve farm tasks',
-            ],
-            'worker' => [
-                'view farm', 'view statistics',
-                'manage poultry houses', 'view flocks', 'manage flocks',
-                'manage inventory', 'manage schedules',
-                'view schedules', 'view feeding schedules', 'view feeding schedule items',
-                'view feeding batch schedules', 'view feeding batch schedule items', 'view batch schedules',
-                'view poultry types',
-                'view flock stages',
-                'view farm tasks', 'complete farm tasks',
-            ],
-        ];
-    }
-
-    /**
-     * Add a role and its permissions to a farm.
-     */
-    protected function addFarmRole(Farm $farm, string $roleName, array $permissions): Role
-    {
-        // Create the role for this farm
-        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
-        $role = Role::firstOrCreate(
-            ['name' => $roleName, 'guard_name' => 'api', 'farm_id' => $farm->id]
-        );
-
-        // Create and assign each permission
-        foreach ($permissions as $permission) {
-            Permission::findOrCreate($permission, 'api');
-        }
-
-        // Sync all permissions to the role
-        $role->syncPermissions($permissions);
-
-        return $role;
-    }
-
-    /**
-     * Create farm-specific roles and permissions for owner/manager/worker.
-     */
-    protected function createFarmRolesAndPermissions(Farm $farm): void
-    {
-        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
-
-        // Define all permissions
-        $allPermissions = [
             // Farm Management
             'view farm',
             'create farm',
@@ -208,6 +142,10 @@ trait ManagesFarmRoles
             'update schedules',
             'delete schedules',
             'manage schedules',
+            'view schedule items',
+            'create schedule items',
+            'update schedule items',
+            'delete schedule items',
             'view feeding schedules',
             'create feeding schedules',
             'update feeding schedules',
@@ -261,19 +199,26 @@ trait ManagesFarmRoles
             'update sales',
             'delete sales',
             'manage sales',
+
+            // Invoice Management
+            'view invoices',
+            'create invoices',
+            'update invoices',
+            'delete invoices',
         ];
+    }
 
-        // Ensure all permissions exist for this farm context
-        foreach ($allPermissions as $permission) {
-            Permission::findOrCreate($permission, 'api');
-        }
+    /**
+     * @return array<string, list<string>>
+     */
+    protected function getDefaultRolePermissionsMap(): array
+    {
+        $allPermissions = $this->getAllFarmPermissions();
 
-        // Role permissions map
-        $rolePermissions = [
+        return [
             'owner' => $allPermissions,
-            'manager' => array_filter($allPermissions, function ($permission) {
-                // Managers can't manage users, billing, roles, or permissions or delete the farm
-                return !in_array($permission, [
+            'manager' => array_values(array_filter($allPermissions, function ($permission) {
+                return ! in_array($permission, [
                     'manage users',
                     'manage billing',
                     'manage user roles',
@@ -281,10 +226,9 @@ trait ManagesFarmRoles
                     'manage roles',
                     'manage permissions',
                     'delete farm',
-                ]);
-            }),
-            'worker' => array_filter($allPermissions, function ($permission) {
-                // Workers have limited, mostly read-only permissions
+                ], true);
+            })),
+            'worker' => array_values(array_filter($allPermissions, function ($permission) {
                 return in_array($permission, [
                     'view farm',
                     'view users',
@@ -316,13 +260,44 @@ trait ManagesFarmRoles
                     'view egg records',
                     'view customers',
                     'view sales',
-                ]);
-            }),
+                    'view invoices',
+                ], true);
+            })),
         ];
+    }
 
-        foreach ($rolePermissions as $roleName => $permissions) {
+    /**
+     * Add a role and its permissions to a farm.
+     */
+    protected function addFarmRole(Farm $farm, string $roleName, array $permissions): Role
+    {
+        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+        $role = Role::firstOrCreate(
+            ['name' => $roleName, 'guard_name' => 'api', 'farm_id' => $farm->id]
+        );
+
+        foreach ($permissions as $permission) {
+            Permission::findOrCreate($permission, 'api');
+        }
+
+        $role->syncPermissions($permissions);
+
+        return $role;
+    }
+
+    /**
+     * Create farm-specific roles and permissions for owner/manager/worker.
+     */
+    protected function createFarmRolesAndPermissions(Farm $farm): void
+    {
+        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+
+        foreach ($this->getAllFarmPermissions() as $permission) {
+            Permission::findOrCreate($permission, 'api');
+        }
+
+        foreach ($this->getDefaultRolePermissionsMap() as $roleName => $permissions) {
             $this->addFarmRole($farm, $roleName, $permissions);
         }
     }
 }
-

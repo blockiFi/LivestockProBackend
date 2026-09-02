@@ -3,27 +3,28 @@
 namespace App\Console\Commands;
 
 use App\Models\Farm;
-use App\Traits\ManagesFarmRoles;
+use App\Services\FarmPermissionSyncService;
 use Illuminate\Console\Command;
 
 class SyncFarmTaskPermissions extends Command
 {
-    use ManagesFarmRoles;
-
     protected $signature = 'farm-tasks:sync-permissions {--farm= : Specific farm id}';
 
-    protected $description = 'Ensure farm task permissions exist on owner/manager/worker roles';
+    protected $description = 'Ensure default farm role permissions are synced (tasks, CRM, invoices, etc.)';
 
-    public function handle(): int
+    public function handle(FarmPermissionSyncService $syncService): int
     {
         $farmId = $this->option('farm');
-        $farms = $farmId
-            ? Farm::where('id', $farmId)->get()
-            : Farm::query()->get();
 
-        foreach ($farms as $farm) {
-            $this->createFarmRolesAndPermissions($farm);
-            $this->line("Synced task permissions for farm {$farm->id}");
+        if ($farmId) {
+            $farm = Farm::findOrFail($farmId);
+            $syncService->syncFarm($farm);
+            $this->line("Synced permissions for farm {$farm->id}");
+        } else {
+            Farm::query()->each(function (Farm $farm) use ($syncService) {
+                $syncService->syncFarm($farm);
+                $this->line("Synced permissions for farm {$farm->id}");
+            });
         }
 
         $this->info('Done.');

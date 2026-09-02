@@ -13,6 +13,7 @@ class FarmTaskInstance extends Model
 {
     protected $fillable = [
         'farm_id',
+        'flock_id',
         'schedule_id',
         'title',
         'description',
@@ -50,6 +51,11 @@ class FarmTaskInstance extends Model
     public function farm(): BelongsTo
     {
         return $this->belongsTo(Farm::class);
+    }
+
+    public function flock(): BelongsTo
+    {
+        return $this->belongsTo(Flock::class);
     }
 
     public function schedule(): BelongsTo

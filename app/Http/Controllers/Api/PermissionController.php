@@ -14,6 +14,7 @@ use App\Traits\RegisterEvents;
 use App\Exceptions\PermissionDoesNotExist;
 use App\Models\Group;
 use Spatie\Permission\PermissionRegistrar;
+use App\Services\PermissionGroupAssignmentService;
 class PermissionController extends ApiController
 {
     use RegisterEvents;
@@ -46,8 +47,17 @@ class PermissionController extends ApiController
             return $this->sendError('You do not have permission to view permissions', [], 403);
         }
 
-        $permissionGroups = Group::with('permissions')->get();
-        return $this->sendResponse($permissionGroups, 'Grouped permissions retrieved successfully');
+        $assignmentService = app(PermissionGroupAssignmentService::class);
+        $assignmentService->assignAll();
+
+        $permissionGroups = Group::with(['permissions' => fn ($query) => $query->orderBy('name')])
+            ->orderBy('name')
+            ->get();
+
+        return $this->sendResponse([
+            'groups' => $permissionGroups,
+            'total_permissions' => $assignmentService->totalPermissionCount(),
+        ], 'Grouped permissions retrieved successfully');
     }
     public function getRoles($farm)
     {   

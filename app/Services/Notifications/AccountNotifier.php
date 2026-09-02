@@ -21,7 +21,7 @@ class AccountNotifier
         $this->notifications->send(
             NotificationMessage::make(NotificationType::WELCOME)
                 ->to($user)
-                ->title('Welcome to LivestockPro')
+                ->title('Welcome to Farm Central')
                 ->body('Your account is ready. Select a farm to start managing tasks, flocks, and inventory.')
                 ->action('/farm-selection', 'Choose a farm')
                 ->dedupe('welcome:u' . $user->id)

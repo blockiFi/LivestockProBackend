@@ -35,6 +35,8 @@ class BatchScheduleController extends ApiController
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
         $schedule = BatchSchedule::create($request->only(['farm_id', 'flock_id', 'schedule_id', 'status']));
+        app(\App\Services\MedVacBatchScheduleItemGenerator::class)
+            ->generateForBatchSchedule($schedule);
         return $this->sendResponse($schedule, 'Batch schedule created successfully', 201);
     }
 

@@ -13,6 +13,7 @@ use App\Models\PoultryMedicationInventory;
 use App\Models\PoultryMortalityReport;
 use App\Models\PoultryVaccineInventory;
 use App\Models\ScheduleItem;
+use App\Services\MedVacBatchScheduleItemGenerator;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -543,6 +544,22 @@ class FarmAlertService
             ->get();
 
         $completedKeys = [];
+        $recurringItemIds = [];
+        foreach ($batchSchedules as $batch) {
+            foreach ($batch->schedule?->items ?? [] as $templateItem) {
+                if ($templateItem->is_recurring) {
+                    $recurringItemIds[(int) $templateItem->id] = true;
+                }
+            }
+        }
+
+        $materializedBatchIds = $batchSchedules
+            ->filter(fn (BatchSchedule $batch) => ($batch->items ?? collect())->contains(
+                fn ($item) => strtolower((string) ($item->status ?? '')) === 'scheduled'
+            ))
+            ->pluck('id')
+            ->all();
+
         foreach ($batchSchedules as $batch) {
             foreach ($batch->items ?? [] as $executed) {
                 $status = strtolower((string) ($executed->status ?? ''));
@@ -557,15 +574,21 @@ class FarmAlertService
                     ? Carbon::parse($executed->scheduled_date)->toDateString()
                     : 'any';
                 $completedKeys[$scheduleItemId . '_' . $dateKey] = true;
-                $completedKeys[$scheduleItemId . '_any'] = true;
+                if (! isset($recurringItemIds[$scheduleItemId])) {
+                    $completedKeys[$scheduleItemId . '_any'] = true;
+                }
             }
         }
 
         $upcoming = collect();
         $seenItemIds = [];
+        $generator = app(MedVacBatchScheduleItemGenerator::class);
+        $endDate = $flock->expected_end_date
+            ? Carbon::parse($flock->expected_end_date, $timezone)->startOfDay()
+            : null;
 
         foreach ($batchSchedules as $batch) {
-            if (! $batch->schedule) {
+            if (! $batch->schedule || in_array($batch->id, $materializedBatchIds, true)) {
                 continue;
             }
 
@@ -573,49 +596,42 @@ class FarmAlertService
             $type = $scheduleType === 'vaccination' ? 'vaccination' : 'medication';
 
             foreach ($batch->schedule->items as $item) {
-                $ageDays = (int) ($item->age_days ?? 0);
-                if ($ageDays <= 0) {
-                    continue;
+                $dates = $generator->expandOccurrenceDates($item, $flock, $endDate);
+
+                foreach ($dates as $scheduledDate) {
+                    if ($scheduledDate->lt($fromDate) || $scheduledDate->gt($toDate)) {
+                        continue;
+                    }
+
+                    $dateKey = $scheduledDate->toDateString();
+                    if (
+                        isset($completedKeys[$item->id . '_' . $dateKey])
+                        || isset($completedKeys[$item->id . '_any'])
+                    ) {
+                        continue;
+                    }
+
+                    $daysUntilDate = (int) round(
+                        $today->copy()->startOfDay()->diffInDays($scheduledDate->copy()->startOfDay(), false)
+                    );
+
+                    $itemKey = $type . '_' . $item->id . '_' . $dateKey;
+                    if (isset($seenItemIds[$itemKey])) {
+                        continue;
+                    }
+                    $seenItemIds[$itemKey] = true;
+
+                    $upcoming->push($this->buildUpcomingItemPayload(
+                        $type,
+                        $item,
+                        $batch,
+                        $flock,
+                        $dateKey,
+                        $daysUntilDate,
+                        null,
+                        null
+                    ));
                 }
-                if ($ageDays < $minAgeDays || $ageDays > $maxAgeDays) {
-                    continue;
-                }
-
-                $offsetDays = max(0, $ageDays - $arrivalAge);
-                $scheduledDate = $arrivalDate->copy()->addDays($offsetDays)->startOfDay();
-
-                if ($scheduledDate->lt($fromDate) || $scheduledDate->gt($toDate)) {
-                    continue;
-                }
-
-                $dateKey = $scheduledDate->toDateString();
-                if (
-                    isset($completedKeys[$item->id . '_' . $dateKey])
-                    || isset($completedKeys[$item->id . '_any'])
-                ) {
-                    continue;
-                }
-
-                $daysUntilDate = (int) round(
-                    $today->copy()->startOfDay()->diffInDays($scheduledDate->copy()->startOfDay(), false)
-                );
-
-                $itemKey = $type . '_' . $item->id . '_' . $dateKey;
-                if (isset($seenItemIds[$itemKey])) {
-                    continue;
-                }
-                $seenItemIds[$itemKey] = true;
-
-                $upcoming->push($this->buildUpcomingItemPayload(
-                    $type,
-                    $item,
-                    $batch,
-                    $flock,
-                    $dateKey,
-                    $daysUntilDate,
-                    null,
-                    null
-                ));
             }
         }
 

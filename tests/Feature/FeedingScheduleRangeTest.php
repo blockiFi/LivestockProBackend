@@ -20,6 +20,7 @@ use App\Models\User;
 use App\Services\FeedingScheduleRangeService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
 class FeedingScheduleRangeTest extends TestCase
@@ -48,6 +49,8 @@ class FeedingScheduleRangeTest extends TestCase
         ]);
 
         $permissions = collect([
+            'view schedules',
+            'update schedules',
             'view feeding schedules',
             'create feeding schedules',
             'update feeding schedules',
@@ -70,6 +73,7 @@ class FeedingScheduleRangeTest extends TestCase
         ]);
         $ownerRole->givePermissionTo($permissions);
         $this->farm->users()->attach($this->user->id);
+        app(PermissionRegistrar::class)->setPermissionsTeamId($this->farm->id);
         $this->user->assignRole($ownerRole);
 
         $this->poultryType = PoultryType::factory()->create(['name' => 'Broiler']);
@@ -436,5 +440,21 @@ class FeedingScheduleRangeTest extends TestCase
         $types = array_column($timeline, 'type');
         $this->assertContains('gap', $types);
         $this->assertContains('range', $types);
+    }
+
+    public function test_feeding_schedule_update_does_not_resolve_med_vac_schedule_model(): void
+    {
+        $feedingSchedule = $this->makeSchedule([
+            ['start_day' => 1, 'end_day' => 7],
+        ]);
+
+        $this->assertNull(\App\Models\Schedule::find($feedingSchedule->id));
+
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->putJson("/api/farms/{$this->farm->id}/feeding/schedules/{$feedingSchedule->id}", [
+                'title' => 'Updated feeding title',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.title', 'Updated feeding title');
     }
 }

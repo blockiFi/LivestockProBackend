@@ -222,18 +222,22 @@ class FlockController extends ApiController
 
                 // Generate batch schedules if schedule IDs are provided
                 if ($request->medication_schedule_id) {
-                    \App\Models\BatchSchedule::create([
+                    $medBatchSchedule = \App\Models\BatchSchedule::create([
                         'farm_id' => $request->farm_id,
                         'flock_id' => $flock->id,
                         'schedule_id' => $request->medication_schedule_id,
                     ]);
+                    app(\App\Services\MedVacBatchScheduleItemGenerator::class)
+                        ->generateForBatchSchedule($medBatchSchedule);
                 }
                 if ($request->vaccination_schedule_id) {
-                    \App\Models\BatchSchedule::create([
+                    $vacBatchSchedule = \App\Models\BatchSchedule::create([
                         'farm_id' => $request->farm_id,
                         'flock_id' => $flock->id,
                         'schedule_id' => $request->vaccination_schedule_id,
                     ]);
+                    app(\App\Services\MedVacBatchScheduleItemGenerator::class)
+                        ->generateForBatchSchedule($vacBatchSchedule);
                 }
                 if ($request->feeding_schedule_id) {
                     \App\Models\FeedingBatchSchedule::create([

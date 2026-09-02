@@ -262,6 +262,7 @@ class TaskInstanceGenerator
 
         $payload = [
             'farm_id' => $schedule->farm_id,
+            'flock_id' => $schedule->flock_id,
             'schedule_id' => $schedule->id,
             'title' => $schedule->title,
             'description' => $schedule->description,

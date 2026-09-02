@@ -142,7 +142,7 @@ class FeedingScheduleController extends ApiController
         return $this->sendResponse($schedule, 'Feeding schedule retrieved successfully');
     }
 
-    public function update(Request $request, $farmId, $id)
+    public function update(Request $request, $id)
     {
         $schedule = FeedingSchedule::findOrFail($id);
         $farmId = $schedule->farm_id ?? null;

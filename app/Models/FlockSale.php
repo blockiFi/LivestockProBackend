@@ -13,6 +13,7 @@ class FlockSale extends Model
 
     protected $fillable = [
         'farm_id',
+        'customer_id',
         'flock_id',
         'quantity',
         'unit_price',
@@ -43,6 +44,11 @@ class FlockSale extends Model
     public function flock(): BelongsTo
     {
         return $this->belongsTo(Flock::class);
+    }
+
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class);
     }
 
     public function dailyRecord(): BelongsTo

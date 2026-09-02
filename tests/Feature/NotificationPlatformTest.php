@@ -85,7 +85,7 @@ class NotificationPlatformTest extends TestCase
 
         $this->assertDatabaseHas('notifications_center', [
             'type' => NotificationType::WELCOME,
-            'title' => 'Welcome to LivestockPro',
+            'title' => 'Welcome to Farm Central',
         ]);
     }
 

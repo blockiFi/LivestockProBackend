@@ -24,6 +24,11 @@ class BatchSchedule extends Model
         return $this->belongsTo(Schedule::class);
     }
 
+    public function flock(): BelongsTo
+    {
+        return $this->belongsTo(Flock::class);
+    }
+
     public function items(): HasMany
     {
         return $this->hasMany(BatchScheduleItem::class);
