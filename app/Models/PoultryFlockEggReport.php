@@ -19,6 +19,7 @@ class PoultryFlockEggReport extends Model
         'farm_id',
         'flock_id',
         'eggs_collected',
+        'eggs_broken',
         'average_egg_weight',
         'production_percentage',
         'bird_count',
@@ -34,6 +35,8 @@ class PoultryFlockEggReport extends Model
      */
     protected $casts = [
         'date' => 'date',
+        'eggs_collected' => 'integer',
+        'eggs_broken' => 'integer',
         'average_egg_weight' => 'decimal:2',
         'production_percentage' => 'decimal:2',
     ];
@@ -55,19 +58,27 @@ class PoultryFlockEggReport extends Model
     }
 
     /**
-     * Get the user who created the report.
+     * Get the user who recorded the report.
      */
-    public function creator()
+    public function recordedBy()
     {
         return $this->belongsTo(User::class, 'recorded_by');
     }
 
     /**
-     * Get the user who last updated the report.
+     * @deprecated Use recordedBy() instead.
+     */
+    public function creator()
+    {
+        return $this->recordedBy();
+    }
+
+    /**
+     * @deprecated Use recordedBy() instead.
      */
     public function updater()
     {
-        return $this->belongsTo(User::class, 'recorded_by');
+        return $this->recordedBy();
     }
 
     /**

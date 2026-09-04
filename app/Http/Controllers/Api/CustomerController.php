@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Models\Customer;
 use App\Models\Farm;
+use App\Services\CustomerPaymentService;
 use App\Services\CustomerService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -11,7 +12,8 @@ use Illuminate\Support\Facades\Validator;
 class CustomerController extends ApiController
 {
     public function __construct(
-        private readonly CustomerService $customerService
+        private readonly CustomerService $customerService,
+        private readonly CustomerPaymentService $paymentService
     ) {
     }
 
@@ -142,6 +144,81 @@ class CustomerController extends ApiController
         );
 
         return $this->sendResponse($history, 'Customer history retrieved successfully');
+    }
+
+    public function recordPayment(Request $request, $farmId, $customerId)
+    {
+        $farm = Farm::findOrFail($farmId);
+
+        if (! $this->canRecordPayments($request, $farm)) {
+            return $this->sendUnauthorizedError('Unauthorized to record customer payments');
+        }
+
+        $customer = Customer::where('farm_id', $farm->id)->findOrFail($customerId);
+
+        $validator = Validator::make($request->all(), [
+            'type' => 'required|in:product,invoice',
+            'id' => 'required|integer|min:1',
+            'amount' => 'required|numeric|min:0.01',
+            'payment_method' => 'nullable|string|max:50',
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        try {
+            $result = $this->paymentService->recordPayment(
+                $farm,
+                $customer,
+                $request->input('type'),
+                (int) $request->input('id'),
+                (float) $request->input('amount'),
+                $request->input('payment_method'),
+                $request->input('notes')
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->sendError($e->getMessage(), [], 422);
+        }
+
+        return $this->sendResponse([
+            'payment' => [
+                'type' => $result['type'],
+                'id' => $result['record']->id,
+                'amount_paid' => $result['amount_paid'],
+                'balance_due' => $result['balance_due'],
+                'payment_status' => $result['payment_status'],
+            ],
+            'summary' => $this->customerService->summary($customer),
+        ], 'Payment recorded successfully');
+    }
+
+    private function canRecordPayments(Request $request, Farm $farm): bool
+    {
+        return $this->canAny($request->user(), $farm, [
+            'update sales',
+            'manage sales',
+            'update invoices',
+            'manage customers',
+            'update customers',
+            'create sales',
+        ]);
+    }
+
+    private function canAny($user, Farm $farm, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            try {
+                if ($user->hasPermissionTo($permission, 'api', $farm)) {
+                    return true;
+                }
+            } catch (\App\Exceptions\PermissionDoesNotExist) {
+                continue;
+            }
+        }
+
+        return false;
     }
 
     private function canViewCustomers(Request $request, Farm $farm): bool

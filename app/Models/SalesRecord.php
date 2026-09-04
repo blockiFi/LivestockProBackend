@@ -21,6 +21,7 @@ class SalesRecord extends Model
         'quantity',
         'unit_price',
         'total_amount',
+        'amount_paid',
         'date',
         'customer_id',
         'customer_name',
@@ -36,6 +37,7 @@ class SalesRecord extends Model
         'quantity' => 'decimal:2',
         'unit_price' => 'decimal:2',
         'total_amount' => 'decimal:2',
+        'amount_paid' => 'decimal:2',
     ];
 
     public function farm(): BelongsTo

@@ -626,9 +626,14 @@ class FlockDailyRecordController extends ApiController
             ? round(($eggsCollected / $birdCount) * 100, 2)
             : 0;
 
+        $eggsBroken = max(0, (int) ($normalized['eggs_broken'] ?? 0));
+        if ($eggsBroken > $eggsCollected) {
+            $eggsBroken = $eggsCollected;
+        }
+
         $notes = self::AUTO_CREATED_NOTE;
-        if (($normalized['eggs_broken'] ?? 0) > 0) {
-            $notes .= ' Broken eggs: ' . (int) $normalized['eggs_broken'] . '.';
+        if ($eggsBroken > 0) {
+            $notes .= ' Broken eggs: '.$eggsBroken.'.';
         }
 
         PoultryFlockEggReport::updateOrCreate(
@@ -639,6 +644,7 @@ class FlockDailyRecordController extends ApiController
             [
                 'farm_id' => $farmId,
                 'eggs_collected' => $eggsCollected,
+                'eggs_broken' => $eggsBroken,
                 'average_egg_weight' => ($normalized['egg_weight_grams'] ?? 0) > 0
                     ? $normalized['egg_weight_grams']
                     : 0,
@@ -709,7 +715,26 @@ class FlockDailyRecordController extends ApiController
         }
 
         if (!$inventory) {
-            return false;
+            $feedTypeId = \App\Models\PoultryFeedType::where('poultry_type_id', $flock->poultry_type_id)
+                ->orderBy('id')
+                ->value('id');
+
+            if (!$feedTypeId) {
+                $feedTypeId = \App\Models\PoultryFeedType::where('farm_id', $farmId)
+                    ->orderBy('id')
+                    ->value('id');
+            }
+
+            if (!$feedTypeId) {
+                return false;
+            }
+
+            $inventory = FeedUsageInventoryService::resolveOrCreateInventory(
+                $farmId,
+                (int) $feedTypeId,
+                auth()->id(),
+                $preferredInventoryId
+            );
         }
 
         $deductAmount = $feedKg;

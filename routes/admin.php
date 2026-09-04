@@ -7,7 +7,7 @@ use App\Http\Controllers\Admin\AdminFarmController;
 use App\Http\Controllers\Admin\AdminFarmSubscriptionController;
 use App\Http\Controllers\Admin\AdminImpersonationController;
 use App\Http\Controllers\Admin\AdminInventoryAlertController;
-use App\Http\Controllers\Admin\AdminNotificationController;
+use App\Http\Controllers\Admin\AdminPlatformSettingsController;
 use App\Http\Controllers\Admin\AdminReferenceDataController;
 use App\Http\Controllers\Admin\AdminResourceController;
 use App\Http\Controllers\Admin\AdminSystemController;
@@ -86,6 +86,8 @@ Route::prefix('system')->middleware('platform.role:super_admin')->group(function
 });
 
 // Support tools
+Route::get('/platform-settings', [AdminPlatformSettingsController::class, 'show'])->middleware('platform.role:support');
+Route::put('/platform-settings', [AdminPlatformSettingsController::class, 'update'])->middleware('platform.role:support');
 Route::post('/impersonate/{user}', [AdminImpersonationController::class, 'store'])->middleware('platform.role:support');
 Route::delete('/impersonate', [AdminImpersonationController::class, 'destroy'])->middleware('platform.role:support');
 Route::post('/notifications/broadcast', [AdminNotificationController::class, 'broadcast'])->middleware('platform.role:super_admin');

@@ -17,6 +17,7 @@ use App\Models\Role;
 use App\Models\SalesRecord;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
 class SalesRecordTest extends TestCase
@@ -57,6 +58,7 @@ class SalesRecordTest extends TestCase
         $ownerRole->givePermissionTo($permissions);
 
         $this->farm->users()->attach($this->user->id);
+        app(PermissionRegistrar::class)->setPermissionsTeamId($this->farm->id);
         $this->user->assignRole($ownerRole);
 
         $poultryType = PoultryType::factory()->create();
@@ -146,6 +148,58 @@ class SalesRecordTest extends TestCase
                 'date' => $date,
             ])
             ->assertStatus(422);
+    }
+
+    public function test_egg_sale_can_use_cumulative_stock_from_prior_days(): void
+    {
+        FlockDailyRecord::create([
+            'flock_id' => $this->flock->id,
+            'farm_id' => $this->farm->id,
+            'date' => now()->subDays(2)->toDateString(),
+            'total_birds' => 100,
+            'mortality_count' => 0,
+            'culling_count' => 0,
+            'eggs_collected' => 200,
+            'eggs_broken' => 10,
+            'recorded_by' => $this->user->id,
+        ]);
+        FlockDailyRecord::create([
+            'flock_id' => $this->flock->id,
+            'farm_id' => $this->farm->id,
+            'date' => now()->subDay()->toDateString(),
+            'total_birds' => 100,
+            'mortality_count' => 0,
+            'culling_count' => 0,
+            'eggs_collected' => 180,
+            'eggs_broken' => 5,
+            'recorded_by' => $this->user->id,
+        ]);
+
+        // Sale day itself has little production, but prior stock (365) is enough for 300.
+        FlockDailyRecord::create([
+            'flock_id' => $this->flock->id,
+            'farm_id' => $this->farm->id,
+            'date' => now()->toDateString(),
+            'total_birds' => 100,
+            'mortality_count' => 0,
+            'culling_count' => 0,
+            'eggs_collected' => 20,
+            'recorded_by' => $this->user->id,
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/sales-records", [
+                'type' => 'egg',
+                'flock_id' => $this->flock->id,
+                'quantity' => 300,
+                'unit_price' => 50,
+                'date' => now()->toDateString(),
+                'customer_id' => $this->customer->id,
+                'payment_status' => 'paid',
+            ]);
+
+        $response->assertStatus(201);
+        $this->assertEquals(300.0, (float) $response->json('data.quantity'));
     }
 
     public function test_can_create_manure_sale_without_flock(): void

@@ -6,6 +6,7 @@ use App\Models\Flock;
 use App\Models\FlockDailyRecord;
 use App\Models\FlockExpenditure;
 use App\Models\FlockSale;
+use App\Models\PoultryFlockEggReport;
 use App\Models\SalesRecord;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -120,35 +121,65 @@ class SalesProfitLossService
     }
 
     /**
-     * Validate egg sale quantity against recorded production for the flock/date.
+     * Validate egg sale quantity against cumulative available stock for the flock.
+     * Eggs collected on earlier days can be sold later; stock is not limited to the sale date's production.
+     *
+     * available = collected (on/before sale date) − broken (on/before sale date) − other egg sales
      *
      * @return array{valid: bool, message?: string, available?: float}
      */
     public function validateEggSaleQuantity(int $farmId, int $flockId, string $date, float $quantity, ?int $excludeRecordId = null): array
     {
-        $dailyRecord = FlockDailyRecord::where('farm_id', $farmId)
-            ->where('flock_id', $flockId)
-            ->whereDate('date', $date)
-            ->first();
+        $saleDate = Carbon::parse($date)->toDateString();
 
-        $produced = (float) ($dailyRecord?->egg_production_count ?? $dailyRecord?->eggs_collected ?? 0);
-
-        $alreadySoldQuery = SalesRecord::where('farm_id', $farmId)
+        $eggReports = PoultryFlockEggReport::query()
+            ->where('farm_id', $farmId)
             ->where('flock_id', $flockId)
-            ->where('type', 'egg')
-            ->whereDate('date', $date);
+            ->whereDate('date', '<=', $saleDate)
+            ->get(['date', 'eggs_collected', 'eggs_broken']);
+
+        $reportDates = [];
+        $produced = 0.0;
+        $broken = 0.0;
+        foreach ($eggReports as $report) {
+            $key = Carbon::parse($report->date)->toDateString();
+            $reportDates[$key] = true;
+            $produced += (float) ($report->eggs_collected ?? 0);
+            $broken += (float) ($report->eggs_broken ?? 0);
+        }
+
+        // Legacy: include daily production only for dates that have no egg report.
+        $dailyRows = FlockDailyRecord::query()
+            ->where('farm_id', $farmId)
+            ->where('flock_id', $flockId)
+            ->whereDate('date', '<=', $saleDate)
+            ->get(['date', 'eggs_collected', 'egg_production_count', 'eggs_broken']);
+
+        foreach ($dailyRows as $daily) {
+            $key = Carbon::parse($daily->date)->toDateString();
+            if (isset($reportDates[$key])) {
+                continue;
+            }
+            $produced += (float) ($daily->egg_production_count ?? $daily->eggs_collected ?? 0);
+            $broken += (float) ($daily->eggs_broken ?? 0);
+        }
+
+        $alreadySoldQuery = SalesRecord::query()
+            ->where('farm_id', $farmId)
+            ->where('flock_id', $flockId)
+            ->where('type', 'egg');
 
         if ($excludeRecordId) {
             $alreadySoldQuery->where('id', '!=', $excludeRecordId);
         }
 
         $alreadySold = (float) $alreadySoldQuery->sum('quantity');
-        $available = max(0, $produced - $alreadySold);
+        $available = max(0, $produced - $broken - $alreadySold);
 
         if ($quantity > $available) {
             return [
                 'valid' => false,
-                'message' => "Cannot sell more eggs than recorded production for this date ({$available} available).",
+                'message' => "Cannot sell more eggs than available stock ({$available} available).",
                 'available' => $available,
             ];
         }

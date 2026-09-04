@@ -44,7 +44,7 @@ class FlockMortalityReportController extends ApiController
         $validator = Validator::make($request->all(), [
             'flock_id' => 'required|exists:flocks,id',
             'mortality_count' => 'required|integer|min:0',
-            'average_weight' => 'required|numeric|min:0',
+            'average_weight' => 'nullable|numeric|min:0',
             'bird_count' => 'nullable|integer|min:0',
             'mortality_percentage' => 'nullable|numeric|min:0',
             'notes' => 'nullable|string',
@@ -80,7 +80,7 @@ class FlockMortalityReportController extends ApiController
             'flock_id' => $flock->id,
             'poultry_type_id' => $flock->poultry_type_id,
             'mortality_count' => $mortalityCount,
-            'average_weight' => $request->average_weight,
+            'average_weight' => $request->input('average_weight', 0) ?? 0,
             'bird_count' => $birdCountOnDate,
             'mortality_percentage' => $mortalityPercentage,
             'notes' => $request->notes,

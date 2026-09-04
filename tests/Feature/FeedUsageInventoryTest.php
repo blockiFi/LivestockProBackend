@@ -15,6 +15,7 @@ use App\Models\PoultryType;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
 class FeedUsageInventoryTest extends TestCase
@@ -41,6 +42,8 @@ class FeedUsageInventoryTest extends TestCase
 
         $permissions = collect([
             'view feed inventories',
+            'update feed inventories',
+            'manage feed inventory',
             'view feed usages',
             'create feed usages',
             'update feed usages',
@@ -55,7 +58,13 @@ class FeedUsageInventoryTest extends TestCase
         $ownerRole->givePermissionTo($permissions);
 
         $this->farm->users()->attach($this->user->id);
-        $this->user->assignRole($ownerRole);
+        app(PermissionRegistrar::class)->setPermissionsTeamId($this->farm->id);
+        $this->user->roles()->attach($ownerRole->id, [
+            'model_type' => User::class,
+            'farm_id' => $this->farm->id,
+        ]);
+        $this->user->unsetRelation('roles');
+        $this->user->unsetRelation('permissions');
 
         $poultryType = PoultryType::factory()->create();
         $flockStage = FlockStage::factory()->create(['poultry_type_id' => $poultryType->id]);
@@ -458,5 +467,110 @@ class FeedUsageInventoryTest extends TestCase
         $row = collect($response->json('data'))->firstWhere('id', $this->inventory->id);
         $this->assertNotNull($row);
         $this->assertEquals($latestDate, \Carbon\Carbon::parse($row['last_usage_date'])->toDateString());
+    }
+
+    public function test_feed_usage_without_inventory_auto_creates_zero_cost_overdraft_batch(): void
+    {
+        $feedTypeId = $this->inventory->poultry_feed_type_id;
+        $this->inventory->delete();
+
+        $response = $this->withHeader('Authorization', 'Bearer '.$this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-usages", [
+                'poultry_feed_type_id' => $feedTypeId,
+                'flock_id' => $this->flock->id,
+                'quantity' => 25,
+                'usage_date' => now()->toDateString(),
+            ]);
+
+        $response->assertCreated();
+
+        $usageInventoryId = (int) $response->json('data.poultry_feed_inventory_id');
+        $this->assertGreaterThan(0, $usageInventoryId);
+
+        $created = PoultryFeedInventory::find($usageInventoryId);
+        $this->assertNotNull($created);
+        $this->assertEquals(0.0, (float) $created->unit_cost);
+        $this->assertEquals(-25.0, (float) $created->quantity);
+        $this->assertEquals('depleted', $created->status);
+        $this->assertStringStartsWith('OVERDRAFT-', (string) $created->batch_number);
+    }
+
+    public function test_can_transfer_stock_to_compensate_negative_inventory(): void
+    {
+        $negative = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $this->inventory->poultry_feed_type_id,
+            'quantity' => -20,
+            'available_quantity' => 0,
+            'unit_cost' => 0,
+            'status' => 'depleted',
+            'batch_number' => 'OVERDRAFT-TEST',
+            'created_by' => $this->user->id,
+        ]);
+
+        PoultryFeedUsage::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_inventory_id' => $negative->id,
+            'poultry_feed_type_id' => $negative->poultry_feed_type_id,
+            'flock_id' => $this->flock->id,
+            'quantity' => 20,
+            'unit_cost' => 0,
+            'usage_date' => now()->toDateString(),
+            'created_by' => $this->user->id,
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer '.$this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-inventories/{$negative->id}/transfer", [
+                'from_inventory_id' => $this->inventory->id,
+                'quantity' => 20,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.transferred_quantity', 20);
+
+        $this->assertEquals(0.0, (float) $negative->fresh()->quantity);
+        $this->assertEquals(80.0, (float) $this->inventory->fresh()->quantity);
+    }
+
+    public function test_transfer_rejects_cross_feed_type_and_over_source_quantity(): void
+    {
+        $otherType = PoultryFeedType::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'user',
+            'poultry_type_id' => $this->flock->poultry_type_id,
+            'name' => 'Finisher Feed',
+            'description' => 'Other type',
+        ]);
+
+        $otherInventory = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $otherType->id,
+            'quantity' => 50,
+            'unit_cost' => 3,
+            'status' => 'available',
+            'batch_number' => 'OTHER-TYPE',
+        ]);
+
+        $negative = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $this->inventory->poultry_feed_type_id,
+            'quantity' => -10,
+            'unit_cost' => 0,
+            'status' => 'depleted',
+            'batch_number' => 'OVERDRAFT-X',
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer '.$this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-inventories/{$negative->id}/transfer", [
+                'from_inventory_id' => $otherInventory->id,
+                'quantity' => 5,
+            ])
+            ->assertStatus(422);
+
+        $this->withHeader('Authorization', 'Bearer '.$this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-inventories/{$negative->id}/transfer", [
+                'from_inventory_id' => $this->inventory->id,
+                'quantity' => 1000,
+            ])
+            ->assertStatus(422);
     }
 }

@@ -31,6 +31,7 @@ use App\Http\Controllers\Api\FeedingScheduleItemController;
 use App\Http\Controllers\Api\FeedingBatchScheduleController;
 use App\Http\Controllers\Api\FeedingBatchScheduleItemController;
 use App\Http\Controllers\Api\AiScheduleImportController;
+use App\Http\Controllers\Api\FlockRecordImportController;
 use App\Http\Controllers\Api\FarmTaskTemplateController;
 use App\Http\Controllers\Api\FarmTaskScheduleController;
 use App\Http\Controllers\Api\FarmTaskInstanceController;
@@ -250,6 +251,19 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('farms/{farm}/flocks/{flock}/profit-loss', [SalesStatisticsController::class, 'flockProfitLoss']);
         Route::get('farms/{farm}/sales-statistics', [SalesStatisticsController::class, 'farmProfitLoss']);
 
+        // Flock record bulk import (Excel/CSV + AI)
+        Route::prefix('farms/{farm}/flocks/{flock}/record-imports')->group(function () {
+            Route::get('/template', [FlockRecordImportController::class, 'template']);
+            Route::post('/', [FlockRecordImportController::class, 'store']);
+            Route::get('/{id}', [FlockRecordImportController::class, 'show']);
+            Route::put('/{id}', [FlockRecordImportController::class, 'update']);
+            Route::post('/{id}/confirm', [FlockRecordImportController::class, 'confirm']);
+            Route::delete('/{id}', [FlockRecordImportController::class, 'destroy']);
+        });
+        Route::prefix('farms/{farm}/flocks/{flock}/record-imports')->middleware('farm.ai')->group(function () {
+            Route::post('/{id}/extract', [FlockRecordImportController::class, 'extract']);
+        });
+
         Route::prefix('farms/{farm}/sales-records')->group(function () {
             Route::get('/', [SalesRecordController::class, 'index']);
             Route::post('/', [SalesRecordController::class, 'store']);
@@ -264,6 +278,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::put('/{customer}', [CustomerController::class, 'update']);
             Route::delete('/{customer}', [CustomerController::class, 'destroy']);
             Route::get('/{customer}/history', [CustomerController::class, 'history']);
+            Route::post('/{customer}/payments', [CustomerController::class, 'recordPayment']);
         });
 
     
@@ -432,6 +447,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{inventory}', [FeedInventoryController::class, 'show']);
         Route::put('/{inventory}', [FeedInventoryController::class, 'update']);
         Route::post('/{inventory}/close', [FeedInventoryController::class, 'close']);
+        Route::post('/{inventory}/transfer', [FeedInventoryController::class, 'transfer']);
         Route::delete('/{inventory}', [FeedInventoryController::class, 'destroy']);
         
     });

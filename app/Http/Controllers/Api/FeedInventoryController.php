@@ -242,6 +242,55 @@ class FeedInventoryController extends ApiController
         return $this->sendResponse(null, 'Feed inventory deleted successfully');
     }
 
+    public function transfer(Request $request, $farm, PoultryFeedInventory $inventory)
+    {
+        $user = $request->user();
+        $farm = Farm::findOrFail($farm);
+        if (! $this->canUpdateFeedInventory($user, $farm)) {
+            return $this->sendUnauthorizedError('Unauthorized to update feed inventories');
+        }
+        if ($inventory->farm_id !== $farm->id) {
+            return $this->sendNotFoundError('Feed inventory not found in this farm');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'from_inventory_id' => [
+                'required',
+                'integer',
+                Rule::exists('poultry_feed_inventories', 'id')->where(fn ($q) => $q->where('farm_id', $farm->id)),
+            ],
+            'quantity' => 'required|numeric|min:0.01',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $source = PoultryFeedInventory::where('farm_id', $farm->id)
+            ->findOrFail((int) $request->from_inventory_id);
+
+        try {
+            $transferred = DB::transaction(function () use ($inventory, $source, $request) {
+                return FeedUsageInventoryService::transferBetweenInventories(
+                    $inventory,
+                    $source,
+                    (float) $request->quantity
+                );
+            });
+        } catch (\InvalidArgumentException|\RuntimeException $e) {
+            return $this->sendError($e->getMessage(), [], 422);
+        }
+
+        $inventory->refresh()->load('feedType', 'createdby');
+        $source->refresh()->load('feedType', 'createdby');
+
+        return $this->sendResponse([
+            'transferred_quantity' => $transferred,
+            'target' => $inventory,
+            'source' => $source,
+        ], 'Feed inventory transfer completed successfully');
+    }
+
     public function close(Request $request, $farm, PoultryFeedInventory $inventory)
     {
         $user = $request->user();

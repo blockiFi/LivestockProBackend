@@ -146,11 +146,11 @@ class SettingsTest extends TestCase
         $this->withHeader('Authorization', 'Bearer ' . $this->ownerToken)
             ->getJson('/api/user/preferences')
             ->assertStatus(200)
-            ->assertJsonPath('data.theme', 'system');
+            ->assertJsonPath('data.theme', 'light');
 
         $response = $this->withHeader('Authorization', 'Bearer ' . $this->ownerToken)
             ->putJson('/api/user/preferences', [
-                'theme' => 'dark',
+                'theme' => 'light',
                 'locale' => 'en-GB',
                 'timezone' => 'Africa/Lagos',
                 'date_format' => 'd/m/Y',
@@ -160,13 +160,13 @@ class SettingsTest extends TestCase
             ]);
 
         $response->assertStatus(200)
-            ->assertJsonPath('data.theme', 'dark')
+            ->assertJsonPath('data.theme', 'light')
             ->assertJsonPath('data.notify_schedules', false)
             ->assertJsonPath('data.notify_mortality', false);
 
         $this->assertDatabaseHas('user_settings', [
             'user_id' => $this->owner->id,
-            'theme' => 'dark',
+            'theme' => 'light',
             'locale' => 'en-GB',
             'timezone' => 'Africa/Lagos',
             'date_format' => 'd/m/Y',

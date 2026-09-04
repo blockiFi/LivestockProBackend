@@ -108,6 +108,13 @@ class SalesRecordController extends ApiController
 
         $quantity = round((float) $request->input('quantity'), 2);
         $unitPrice = round((float) $request->input('unit_price'), 2);
+        $total = round($quantity * $unitPrice, 2);
+        $paymentStatus = $request->input('payment_status', 'paid');
+        $amountPaid = match ($paymentStatus) {
+            'paid' => $total,
+            'pending' => 0,
+            default => min($total, round((float) $request->input('amount_paid', 0), 2)),
+        };
 
         $customerFields = CustomerResolver::resolveForFarm(
             $farm,
@@ -127,13 +134,14 @@ class SalesRecordController extends ApiController
             'type' => $type,
             'quantity' => $quantity,
             'unit_price' => $unitPrice,
-            'total_amount' => round($quantity * $unitPrice, 2),
+            'total_amount' => $total,
+            'amount_paid' => $amountPaid,
             'date' => $request->input('date'),
             'customer_id' => $customerFields['customer_id'],
             'customer_name' => $customerFields['customer_name'],
             'customer_phone' => $customerFields['customer_phone'],
             'payment_method' => $request->input('payment_method'),
-            'payment_status' => $request->input('payment_status', 'paid'),
+            'payment_status' => $paymentStatus,
             'notes' => $request->input('notes'),
             'created_by' => $request->user()->id,
         ]);
@@ -174,6 +182,18 @@ class SalesRecordController extends ApiController
         $date = $request->input('date', $record->date?->toDateString());
         $quantity = round((float) $request->input('quantity', $record->quantity), 2);
         $unitPrice = round((float) $request->input('unit_price', $record->unit_price), 2);
+        $total = round($quantity * $unitPrice, 2);
+        $paymentStatus = $request->input('payment_status', $record->payment_status);
+        $amountPaid = $record->amount_paid;
+        if ($request->has('payment_status')) {
+            $amountPaid = match ($paymentStatus) {
+                'paid' => $total,
+                'pending' => 0,
+                default => min($total, (float) ($record->amount_paid ?? 0)),
+            };
+        } elseif ($total !== (float) $record->total_amount) {
+            $amountPaid = min($total, (float) ($record->amount_paid ?? 0));
+        }
 
         if (in_array($type, ['egg', 'meat'], true) && ! $flockId) {
             return $this->sendValidationError('Validation failed', [
@@ -220,13 +240,14 @@ class SalesRecordController extends ApiController
             'flock_id' => $flockId,
             'quantity' => $quantity,
             'unit_price' => $unitPrice,
-            'total_amount' => round($quantity * $unitPrice, 2),
+            'total_amount' => $total,
+            'amount_paid' => $amountPaid,
             'date' => $date,
             'customer_id' => $customerFields['customer_id'],
             'customer_name' => $customerFields['customer_name'],
             'customer_phone' => $customerFields['customer_phone'],
             'payment_method' => $request->has('payment_method') ? $request->input('payment_method') : $record->payment_method,
-            'payment_status' => $request->input('payment_status', $record->payment_status),
+            'payment_status' => $paymentStatus,
             'notes' => $request->has('notes') ? $request->input('notes') : $record->notes,
         ]);
         $record->save();

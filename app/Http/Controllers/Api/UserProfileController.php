@@ -59,7 +59,8 @@ class UserProfileController extends ApiController
     public function updatePreferences(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'theme' => 'sometimes|required|in:light,dark,system',
+            // Dark mode is disabled for now — only light is accepted.
+            'theme' => 'sometimes|required|in:light',
             'locale' => 'sometimes|required|string|max:10',
             'timezone' => 'sometimes|required|string|max:100',
             'date_format' => 'sometimes|required|string|max:20',
@@ -73,7 +74,9 @@ class UserProfileController extends ApiController
         }
 
         $settings = $request->user()->settingsOrDefault();
-        $settings->update($validator->validated());
+        $payload = $validator->validated();
+        $payload['theme'] = 'light';
+        $settings->update($payload);
 
         return $this->sendResponse($settings->fresh(), 'User preferences updated successfully');
     }

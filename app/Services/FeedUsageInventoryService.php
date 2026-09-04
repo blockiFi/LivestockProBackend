@@ -11,6 +11,135 @@ use App\Models\PoultryFeedUsage;
 class FeedUsageInventoryService
 {
     /**
+     * Resolve a usable inventory batch, or create a zero-cost overdraft batch
+     * when none exists for the feed type.
+     */
+    public static function resolveOrCreateInventory(
+        int $farmId,
+        int $feedTypeId,
+        ?int $userId = null,
+        ?int $preferredInventoryId = null
+    ): PoultryFeedInventory {
+        if ($preferredInventoryId) {
+            $preferred = PoultryFeedInventory::where('farm_id', $farmId)
+                ->where('id', $preferredInventoryId)
+                ->first();
+
+            if ($preferred && self::isUsableForDeduction($preferred)) {
+                return $preferred;
+            }
+
+            // Prefer an existing preferred batch even when overdrawn (same type).
+            if (
+                $preferred
+                && (int) $preferred->poultry_feed_type_id === $feedTypeId
+                && strtolower((string) $preferred->status) !== 'closed'
+            ) {
+                return $preferred;
+            }
+        }
+
+        $usable = PoultryFeedInventory::where('farm_id', $farmId)
+            ->where('poultry_feed_type_id', $feedTypeId)
+            ->where('quantity', '>', 0)
+            ->whereIn('status', ['available', 'in_use'])
+            ->orderBy('created_at', 'asc')
+            ->first();
+
+        if ($usable) {
+            return $usable;
+        }
+
+        // Reuse an existing open/depleted overdraft batch before creating another.
+        $existingOverdraft = PoultryFeedInventory::where('farm_id', $farmId)
+            ->where('poultry_feed_type_id', $feedTypeId)
+            ->where('quantity', '<=', 0)
+            ->whereIn('status', ['available', 'in_use', 'depleted'])
+            ->orderByDesc('updated_at')
+            ->first();
+
+        if ($existingOverdraft) {
+            return $existingOverdraft;
+        }
+
+        return PoultryFeedInventory::create([
+            'farm_id' => $farmId,
+            'poultry_feed_type_id' => $feedTypeId,
+            'quantity' => 0,
+            'available_quantity' => 0,
+            'unit_cost' => 0,
+            'status' => 'available',
+            'batch_number' => 'OVERDRAFT-'.now()->format('YmdHis'),
+            'created_by' => $userId,
+            'close_notes' => 'Auto-created for overdraft — update unit cost',
+        ]);
+    }
+
+    public static function isUsableForDeduction(PoultryFeedInventory $inventory): bool
+    {
+        return (float) $inventory->quantity > 0
+            && in_array($inventory->status, ['available', 'in_use'], true);
+    }
+
+    /**
+     * Transfer stock from a positive same-type batch into a target batch
+     * (typically to compensate a negative/overdraft inventory).
+     *
+     * @throws \InvalidArgumentException|\RuntimeException
+     */
+    public static function transferBetweenInventories(
+        PoultryFeedInventory $target,
+        PoultryFeedInventory $source,
+        float $quantity
+    ): float {
+        $quantity = round($quantity, 2);
+
+        if ($quantity <= 0) {
+            throw new \InvalidArgumentException('Transfer quantity must be greater than zero.');
+        }
+
+        if ((int) $target->id === (int) $source->id) {
+            throw new \InvalidArgumentException('Source and destination inventory must be different.');
+        }
+
+        if ((int) $target->farm_id !== (int) $source->farm_id) {
+            throw new \InvalidArgumentException('Inventories must belong to the same farm.');
+        }
+
+        if ((int) $target->poultry_feed_type_id !== (int) $source->poultry_feed_type_id) {
+            throw new \InvalidArgumentException('Inventories must be the same feed type.');
+        }
+
+        if (strtolower((string) $source->status) === 'closed') {
+            throw new \RuntimeException('Cannot transfer from a closed inventory batch.');
+        }
+
+        if (strtolower((string) $target->status) === 'closed') {
+            throw new \RuntimeException('Cannot transfer to a closed inventory batch.');
+        }
+
+        $sourceQty = (float) $source->quantity;
+        if ($sourceQty < $quantity) {
+            throw new \InvalidArgumentException(
+                'Source inventory does not have enough stock for this transfer.'
+            );
+        }
+
+        $source->decrement('quantity', $quantity);
+        $source->refresh();
+        $source->updateStatusBasedOnQuantity();
+
+        $target->increment('quantity', $quantity);
+        $target->refresh();
+        $target->updateStatusBasedOnQuantity();
+
+        // Audit: reassign overdraft usages from target onto the source batch.
+        self::recordTopUpOnNewInventory($target, $source, $quantity);
+
+        return $quantity;
+    }
+
+    /**
      * Deduct feed from inventory when recording new usage.
      * Inventory may go negative when usage exceeds available stock.
      */

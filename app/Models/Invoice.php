@@ -19,6 +19,7 @@ class Invoice extends Model
         'subtotal',
         'tax_amount',
         'total',
+        'amount_paid',
         'status',
         'notes',
         'created_by',
@@ -30,6 +31,7 @@ class Invoice extends Model
         'subtotal' => 'decimal:2',
         'tax_amount' => 'decimal:2',
         'total' => 'decimal:2',
+        'amount_paid' => 'decimal:2',
     ];
 
     public function farm(): BelongsTo

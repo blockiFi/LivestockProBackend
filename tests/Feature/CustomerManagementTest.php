@@ -169,4 +169,111 @@ class CustomerManagementTest extends TestCase
         $response->assertOk();
         $this->assertGreaterThanOrEqual(1, count($response->json('data.data')));
     }
+
+    public function test_customer_summary_includes_payment_analysis(): void
+    {
+        $customer = Customer::create([
+            'farm_id' => $this->farm->id,
+            'name' => 'Payment Customer',
+            'country_id' => $this->country->id,
+        ]);
+
+        SalesRecord::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'egg',
+            'quantity' => 10,
+            'unit_price' => 100,
+            'total_amount' => 1000,
+            'date' => now()->toDateString(),
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'payment_status' => 'pending',
+        ]);
+
+        SalesRecord::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'meat',
+            'quantity' => 5,
+            'unit_price' => 200,
+            'total_amount' => 1000,
+            'date' => now()->toDateString(),
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'payment_status' => 'paid',
+        ]);
+
+        Invoice::create([
+            'farm_id' => $this->farm->id,
+            'customer_id' => $customer->id,
+            'invoice_number' => 'INV-TEST-1',
+            'invoice_date' => now()->toDateString(),
+            'due_date' => now()->addDays(7)->toDateString(),
+            'subtotal' => 500,
+            'tax_amount' => 0,
+            'total' => 500,
+            'status' => 'overdue',
+            'created_by' => $this->user->id,
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer '.$this->token)
+            ->getJson("/api/farms/{$this->farm->id}/customers/{$customer->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('data.summary.payment_analysis.buckets.pending.amount', 1000)
+            ->assertJsonPath('data.summary.payment_analysis.buckets.paid.amount', 1000)
+            ->assertJsonPath('data.summary.payment_analysis.buckets.overdue.amount', 500)
+            ->assertJsonPath('data.summary.payment_analysis.outstanding', 1500);
+    }
+
+    public function test_customer_can_record_partial_payment_top_up(): void
+    {
+        $customer = Customer::create([
+            'farm_id' => $this->farm->id,
+            'name' => 'Top Up Customer',
+            'country_id' => $this->country->id,
+        ]);
+
+        $sale = SalesRecord::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'egg',
+            'quantity' => 10,
+            'unit_price' => 100,
+            'total_amount' => 1000,
+            'amount_paid' => 0,
+            'date' => now()->toDateString(),
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'payment_status' => 'pending',
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer '.$this->token)
+            ->postJson("/api/farms/{$this->farm->id}/customers/{$customer->id}/payments", [
+                'type' => 'product',
+                'id' => $sale->id,
+                'amount' => 400,
+                'payment_method' => 'cash',
+                'notes' => 'First installment',
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.payment.amount_paid', 400)
+            ->assertJsonPath('data.payment.balance_due', 600)
+            ->assertJsonPath('data.payment.payment_status', 'partial');
+
+        $this->assertDatabaseHas('sales_records', [
+            'id' => $sale->id,
+            'amount_paid' => 400,
+            'payment_status' => 'partial',
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer '.$this->token)
+            ->postJson("/api/farms/{$this->farm->id}/customers/{$customer->id}/payments", [
+                'type' => 'product',
+                'id' => $sale->id,
+                'amount' => 600,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.payment.payment_status', 'paid')
+            ->assertJsonPath('data.payment.balance_due', 0);
+    }
 }

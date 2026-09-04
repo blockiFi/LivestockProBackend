@@ -68,11 +68,15 @@ class FeedingBatchScheduleItemService
             return null;
         }
 
-        $inventory = $this->resolveInventory($farmId, (int) $feedTypeId, $preferredInventoryId);
+        $inventory = FeedUsageInventoryService::resolveOrCreateInventory(
+            $farmId,
+            (int) $feedTypeId,
+            auth()->id(),
+            $preferredInventoryId
+        );
 
-        if (!$inventory) {
-            return "{$feedingDate}: No available inventory for feed type #{$feedTypeId}";
-        }
+        $wasAutoCreated = (float) $inventory->quantity <= 0
+            && str_starts_with((string) $inventory->batch_number, 'OVERDRAFT-');
 
         FeedUsageInventoryService::deductFromInventory($inventory, $feedKg);
 
@@ -89,6 +93,10 @@ class FeedingBatchScheduleItemService
 
         if ($flock) {
             FlockExpenditure::recordFromFeedUsage($usage);
+        }
+
+        if ($wasAutoCreated || (float) $inventory->fresh()->quantity < 0) {
+            return "{$feedingDate}: Feed deducted with zero-cost overdraft stock for feed type #{$feedTypeId} — update unit cost";
         }
 
         return null;

@@ -7,6 +7,10 @@ use Carbon\Carbon;
 
 class AdminImpersonationService
 {
+    public function __construct(private readonly PlatformSettingsService $platformSettings)
+    {
+    }
+
     public function createToken(User $admin, User $target): array
     {
         $tokenName = "impersonation:{$admin->id}:{$target->id}";
@@ -18,6 +22,7 @@ class AdminImpersonationService
             'expires_at' => Carbon::now()->addMinutes(15)->toIso8601String(),
             'user' => $target->only(['id', 'name', 'email']),
             'impersonated_by' => $admin->only(['id', 'name', 'email']),
+            'farm_app_url' => $this->platformSettings->getFarmAppUrl(),
         ];
     }
 

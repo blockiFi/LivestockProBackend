@@ -48,6 +48,8 @@ class PermissionSeeder extends Seeder
             'create feed inventories', 'delete feed inventories', 'update feed inventories', 'view feed inventories',
             // Feed Type Management
             'create feed types', 'delete feed types', 'update feed types', 'view feed types',
+            // Feed Product Management
+            'create feed products', 'delete feed products', 'update feed products', 'view feed products',
             // Flock Weight Report Management
             'create flock weight reports', 'delete flock weight reports', 'update flock weight reports', 'view flock weight reports',
             // Flock Mortality Report Management
@@ -56,6 +58,10 @@ class PermissionSeeder extends Seeder
             'create flock egg reports', 'delete flock egg reports', 'update flock egg reports', 'view flock egg reports',
             // Feed Usage Management
             'create feed usages', 'delete feed usages', 'update feed usages', 'view feed usages',
+            // Equipment / Tasks / Billing (farm roles)
+            'view equipment', 'manage equipment', 'view equipment financials',
+            'view farm tasks', 'manage farm tasks', 'complete farm tasks', 'approve farm tasks',
+            'manage billing',
             // Feeding Batch Schedule Item Management
             'create feeding batch schedule items', 'delete feeding batch schedule items', 'update feeding batch schedule items', 'view feeding batch schedule items',
             // Feeding Batch Schedule Management

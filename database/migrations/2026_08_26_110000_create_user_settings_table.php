@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('user_settings', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->unique()->constrained()->onDelete('cascade');
-            $table->string('theme')->default('system');
+            $table->string('theme')->default('light');
             $table->string('locale', 10)->default('en');
             $table->string('timezone')->default('UTC');
             $table->string('date_format', 20)->default('Y-m-d');
