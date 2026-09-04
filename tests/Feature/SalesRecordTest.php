@@ -202,6 +202,81 @@ class SalesRecordTest extends TestCase
         $this->assertEquals(300.0, (float) $response->json('data.quantity'));
     }
 
+    public function test_egg_stock_endpoint_returns_breakdown(): void
+    {
+        FlockDailyRecord::create([
+            'flock_id' => $this->flock->id,
+            'farm_id' => $this->farm->id,
+            'date' => now()->toDateString(),
+            'total_birds' => 100,
+            'mortality_count' => 0,
+            'culling_count' => 0,
+            'eggs_collected' => 200,
+            'eggs_broken' => 10,
+            'recorded_by' => $this->user->id,
+        ]);
+
+        SalesRecord::create([
+            'farm_id' => $this->farm->id,
+            'flock_id' => $this->flock->id,
+            'type' => 'egg',
+            'quantity' => 50,
+            'unit_price' => 40,
+            'total_amount' => 2000,
+            'amount_paid' => 2000,
+            'date' => now()->toDateString(),
+            'payment_status' => 'paid',
+            'created_by' => $this->user->id,
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->getJson("/api/farms/{$this->farm->id}/sales-records/egg-stock?flock_id={$this->flock->id}&date=" . now()->toDateString());
+
+        $response->assertStatus(200)
+            ->assertJsonPath('data.produced', 200)
+            ->assertJsonPath('data.broken', 10)
+            ->assertJsonPath('data.sold', 50)
+            ->assertJsonPath('data.available', 140);
+    }
+
+    public function test_egg_sale_stock_uses_sale_date_not_future_collections(): void
+    {
+        FlockDailyRecord::create([
+            'flock_id' => $this->flock->id,
+            'farm_id' => $this->farm->id,
+            'date' => now()->subDays(5)->toDateString(),
+            'total_birds' => 100,
+            'mortality_count' => 0,
+            'culling_count' => 0,
+            'eggs_collected' => 100,
+            'recorded_by' => $this->user->id,
+        ]);
+        FlockDailyRecord::create([
+            'flock_id' => $this->flock->id,
+            'farm_id' => $this->farm->id,
+            'date' => now()->toDateString(),
+            'total_birds' => 100,
+            'mortality_count' => 0,
+            'culling_count' => 0,
+            'eggs_collected' => 500,
+            'recorded_by' => $this->user->id,
+        ]);
+
+        // Backdated sale can only use eggs collected on/before that date (100).
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/sales-records", [
+                'type' => 'egg',
+                'flock_id' => $this->flock->id,
+                'quantity' => 150,
+                'unit_price' => 50,
+                'date' => now()->subDays(5)->toDateString(),
+                'customer_id' => $this->customer->id,
+                'payment_status' => 'paid',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('errors.available', 100);
+    }
+
     public function test_can_create_manure_sale_without_flock(): void
     {
         $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)

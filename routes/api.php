@@ -266,6 +266,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::prefix('farms/{farm}/sales-records')->group(function () {
             Route::get('/', [SalesRecordController::class, 'index']);
+            Route::get('/egg-stock', [SalesRecordController::class, 'eggStock']);
             Route::post('/', [SalesRecordController::class, 'store']);
             Route::put('/{record}', [SalesRecordController::class, 'update']);
             Route::delete('/{record}', [SalesRecordController::class, 'destroy']);

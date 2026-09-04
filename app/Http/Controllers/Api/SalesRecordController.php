@@ -50,6 +50,51 @@ class SalesRecordController extends ApiController
         return $this->sendResponse($records, 'Product sales retrieved successfully');
     }
 
+    /**
+     * Egg inventory for a flock as of a date (defaults to today).
+     * Query: flock_id (required), date (optional Y-m-d).
+     */
+    public function eggStock(Request $request, $farmId)
+    {
+        $farm = Farm::findOrFail($farmId);
+
+        if (! $this->canViewSales($request, $farm)) {
+            return $this->sendUnauthorizedError('Unauthorized to view product sales');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'flock_id' => 'required|exists:flocks,id',
+            'date' => 'nullable|date',
+            'exclude_record_id' => 'nullable|integer|exists:sales_records,id',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $flockId = (int) $request->input('flock_id');
+        $flock = Flock::where('farm_id', $farmId)->find($flockId);
+        if (! $flock) {
+            return $this->sendValidationError('Validation failed', [
+                'flock_id' => ['Flock does not belong to this farm.'],
+            ]);
+        }
+
+        $asOf = $request->input('date', now()->toDateString());
+        $excludeId = $request->filled('exclude_record_id')
+            ? (int) $request->input('exclude_record_id')
+            : null;
+
+        $stock = $this->profitLossService->computeEggStock(
+            (int) $farmId,
+            $flockId,
+            $asOf,
+            $excludeId
+        );
+
+        return $this->sendResponse($stock, 'Egg stock retrieved successfully');
+    }
+
     public function store(Request $request, $farmId)
     {
         $farm = Farm::findOrFail($farmId);

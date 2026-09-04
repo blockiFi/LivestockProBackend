@@ -121,21 +121,20 @@ class SalesProfitLossService
     }
 
     /**
-     * Validate egg sale quantity against cumulative available stock for the flock.
-     * Eggs collected on earlier days can be sold later; stock is not limited to the sale date's production.
+     * Compute cumulative egg stock for a flock as of a given date (inclusive).
      *
-     * available = collected (on/before sale date) − broken (on/before sale date) − other egg sales
+     * available = collected (on/before date) − broken (on/before date) − egg sales (on/before date)
      *
-     * @return array{valid: bool, message?: string, available?: float}
+     * @return array{produced: float, broken: float, sold: float, available: float, as_of: string}
      */
-    public function validateEggSaleQuantity(int $farmId, int $flockId, string $date, float $quantity, ?int $excludeRecordId = null): array
+    public function computeEggStock(int $farmId, int $flockId, string $date, ?int $excludeRecordId = null): array
     {
-        $saleDate = Carbon::parse($date)->toDateString();
+        $asOf = Carbon::parse($date)->toDateString();
 
         $eggReports = PoultryFlockEggReport::query()
             ->where('farm_id', $farmId)
             ->where('flock_id', $flockId)
-            ->whereDate('date', '<=', $saleDate)
+            ->whereDate('date', '<=', $asOf)
             ->get(['date', 'eggs_collected', 'eggs_broken']);
 
         $reportDates = [];
@@ -152,7 +151,7 @@ class SalesProfitLossService
         $dailyRows = FlockDailyRecord::query()
             ->where('farm_id', $farmId)
             ->where('flock_id', $flockId)
-            ->whereDate('date', '<=', $saleDate)
+            ->whereDate('date', '<=', $asOf)
             ->get(['date', 'eggs_collected', 'egg_production_count', 'eggs_broken']);
 
         foreach ($dailyRows as $daily) {
@@ -167,19 +166,42 @@ class SalesProfitLossService
         $alreadySoldQuery = SalesRecord::query()
             ->where('farm_id', $farmId)
             ->where('flock_id', $flockId)
-            ->where('type', 'egg');
+            ->where('type', 'egg')
+            ->whereDate('date', '<=', $asOf);
 
         if ($excludeRecordId) {
             $alreadySoldQuery->where('id', '!=', $excludeRecordId);
         }
 
-        $alreadySold = (float) $alreadySoldQuery->sum('quantity');
-        $available = max(0, $produced - $broken - $alreadySold);
+        $sold = (float) $alreadySoldQuery->sum('quantity');
+        $available = max(0, $produced - $broken - $sold);
+
+        return [
+            'produced' => $produced,
+            'broken' => $broken,
+            'sold' => $sold,
+            'available' => $available,
+            'as_of' => $asOf,
+        ];
+    }
+
+    /**
+     * Validate egg sale quantity against cumulative available stock for the flock.
+     * Eggs collected on earlier days can be sold later; stock is not limited to the sale date's production.
+     *
+     * available = collected (on/before sale date) − broken (on/before sale date) − other egg sales (on/before sale date)
+     *
+     * @return array{valid: bool, message?: string, available?: float}
+     */
+    public function validateEggSaleQuantity(int $farmId, int $flockId, string $date, float $quantity, ?int $excludeRecordId = null): array
+    {
+        $stock = $this->computeEggStock($farmId, $flockId, $date, $excludeRecordId);
+        $available = $stock['available'];
 
         if ($quantity > $available) {
             return [
                 'valid' => false,
-                'message' => "Cannot sell more eggs than available stock ({$available} available).",
+                'message' => "Cannot sell more eggs than available stock ({$available} available as of {$stock['as_of']}).",
                 'available' => $available,
             ];
         }
