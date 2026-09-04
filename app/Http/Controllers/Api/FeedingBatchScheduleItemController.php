@@ -84,7 +84,7 @@ class FeedingBatchScheduleItemController extends ApiController
         return $this->sendResponse($item, 'Feeding batch schedule item created successfully', 201);
     }
 
-    public function show($id)
+    public function show($farm, $id)
     {
         $item = FeedingBatchScheduleItem::with(['batchSchedule', 'scheduleItem'])->findOrFail($id);
         $farmId = $item->batchSchedule && $item->batchSchedule->flock ? $item->batchSchedule->flock->farm_id : null;
@@ -94,7 +94,7 @@ class FeedingBatchScheduleItemController extends ApiController
         return $this->sendResponse($item, 'Feeding batch schedule item retrieved successfully');
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, $farm, $id)
     {
         $item = FeedingBatchScheduleItem::findOrFail($id);
         $farmId = $item->batchSchedule && $item->batchSchedule->flock ? $item->batchSchedule->flock->farm_id : null;
@@ -131,7 +131,7 @@ class FeedingBatchScheduleItemController extends ApiController
         return $this->sendResponse($item, 'Feeding batch schedule item updated successfully');
     }
 
-    public function destroy($id)
+    public function destroy($farm, $id)
     {
         $item = FeedingBatchScheduleItem::findOrFail($id);
         $farmId = $item->batchSchedule && $item->batchSchedule->flock ? $item->batchSchedule->flock->farm_id : null;

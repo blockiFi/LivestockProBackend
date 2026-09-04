@@ -132,17 +132,17 @@ class FeedingScheduleController extends ApiController
         return $this->sendResponse($payload, 'Feeding schedule created successfully', 201);
     }
 
-    public function show($id)
+    public function show($farm, $id)
     {
         $schedule = FeedingSchedule::with(['items', 'items.feedType'])->findOrFail($id);
-        $farmId = $schedule->farm_id ?? null;
+        $farmId = $schedule->farm_id ?? $farm;
         if ($farmId && !$this->canViewFarmSchedules(auth()->user(), $farmId)) {
             return $this->sendUnauthorizedError('You do not have permission to view this feeding schedule');
         }
         return $this->sendResponse($schedule, 'Feeding schedule retrieved successfully');
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, $farm, $id)
     {
         $schedule = FeedingSchedule::findOrFail($id);
         $farmId = $schedule->farm_id ?? null;
@@ -235,7 +235,7 @@ class FeedingScheduleController extends ApiController
         return $this->sendResponse($payload, 'Feeding schedule updated successfully');
     }
 
-    public function destroy($id)
+    public function destroy($farm, $id)
     {
         $schedule = FeedingSchedule::findOrFail($id);
         $farmId = $schedule->farm_id ?? null;

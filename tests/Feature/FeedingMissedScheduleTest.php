@@ -140,6 +140,7 @@ class FeedingMissedScheduleTest extends TestCase
             'flock_stage_id' => $flockStage->id,
             'quantity' => 100,
             'arrival_date' => $arrival,
+            'arrival_age_days' => 1,
             'status' => 'active',
         ]);
 
@@ -204,6 +205,7 @@ class FeedingMissedScheduleTest extends TestCase
             'flock_stage_id' => $flockStage->id,
             'quantity' => 100,
             'arrival_date' => $arrival,
+            'arrival_age_days' => 1,
             'status' => 'active',
         ]);
 
@@ -227,6 +229,61 @@ class FeedingMissedScheduleTest extends TestCase
         $this->assertEquals(1, $first['feeding_day']);
         $this->assertEquals($arrival, $first['feeding_date']);
         $this->assertEquals(50, $first['planned_quantity']);
+    }
+
+    public function test_missed_days_allocate_across_age_based_ranges_for_older_flock(): void
+    {
+        $flockStage = FlockStage::factory()->create(['poultry_type_id' => $this->poultryType->id]);
+        $house = PoultryHouse::factory()->create([
+            'farm_id' => $this->farm->id,
+            'poultry_type_id' => $this->poultryType->id,
+        ]);
+
+        // Arrived 60 days ago at age 130 → schedule days 130..189 (yesterday).
+        $arrival = Carbon::today()->subDays(60)->toDateString();
+
+        $flock = Flock::factory()->create([
+            'farm_id' => $this->farm->id,
+            'house_id' => $house->id,
+            'poultry_type_id' => $this->poultryType->id,
+            'flock_stage_id' => $flockStage->id,
+            'quantity' => 100,
+            'arrival_date' => $arrival,
+            'arrival_age_days' => 130,
+            'status' => 'active',
+        ]);
+
+        $schedule = $this->makeSchedule([
+            ['start_day' => 130, 'end_day' => 151, 'quantity' => 110],
+            ['start_day' => 152, 'end_day' => null, 'quantity' => 120],
+        ]);
+
+        $batch = FeedingBatchSchedule::create([
+            'farm_id' => $this->farm->id,
+            'flock_id' => $flock->id,
+            'feeding_schedule_id' => $schedule->id,
+            'status' => 'in_progress',
+        ]);
+
+        $firstRangeId = $schedule->items->firstWhere('start_day', 130)->id;
+        $secondRangeId = $schedule->items->firstWhere('start_day', 152)->id;
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->getJson("/api/farms/{$this->farm->id}/feeding/batch-schedules/{$batch->id}/missed-days")
+            ->assertStatus(200);
+
+        $missed = $response->json('data.missed_days');
+        $this->assertCount(60, $missed);
+
+        $byItem = collect($missed)->groupBy('feeding_schedule_item_id');
+        // Days 130–151 inclusive = 22 days on first range; days 152–189 = 38 on open-ended.
+        $this->assertCount(22, $byItem[$firstRangeId]);
+        $this->assertCount(38, $byItem[$secondRangeId]);
+
+        $this->assertEquals(130, $missed[0]['feeding_day']);
+        $this->assertEquals(110, $missed[0]['planned_quantity']);
+        $this->assertEquals(152, $missed[22]['feeding_day']);
+        $this->assertEquals(120, $missed[22]['planned_quantity']);
     }
 
     public function test_implement_missed_creates_late_items_and_deducts_inventory(): void

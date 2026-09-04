@@ -367,18 +367,14 @@ class FeedingMissedScheduleService
 
         $arrival = Carbon::parse($flock->arrival_date)->startOfDay();
         $today = Carbon::today();
-        $currentFeedingDay = FeedingDayService::feedingDayForDate($flock, $today->toDateString());
+        $throughDate = $today->copy()->subDay();
 
-        // Always anchor to flock placement day 1 (arrival), not schedule template dates.
-        $fromDay = max(1, (int) ($options['from_day'] ?? 1));
-        $throughDay = min(
-            max(0, $currentFeedingDay - 1),
-            (int) ($options['through_day'] ?? max(0, $currentFeedingDay - 1))
-        );
-
-        if ($throughDay < $fromDay || $currentFeedingDay <= 1) {
+        if ($throughDate->lt($arrival)) {
             return [];
         }
+
+        $fromScheduleDay = array_key_exists('from_day', $options) ? (int) $options['from_day'] : null;
+        $throughScheduleDay = array_key_exists('through_day', $options) ? (int) $options['through_day'] : null;
 
         $existingDates = FeedingBatchScheduleItem::where('feeding_batch_schedule_id', $batch->id)
             ->pluck('feeding_date')
@@ -388,14 +384,23 @@ class FeedingMissedScheduleService
         $headCount = FeedingDayService::flockHeadCount($flock);
         $missed = [];
 
-        for ($day = $fromDay; $day <= $throughDay; $day++) {
-            $scheduleItem = $this->rangeService->resolveForMissedBackfillDay($batch->schedule, $day);
+        // Walk calendar days from arrival → yesterday; resolve template by bird age.
+        for ($cursor = $arrival->copy(); $cursor->lte($throughDate); $cursor->addDay()) {
+            $feedingDate = $cursor->toDateString();
+            $feedingDay = FeedingDayService::feedingDayForDate($flock, $feedingDate);
+
+            if ($fromScheduleDay !== null && $feedingDay < $fromScheduleDay) {
+                continue;
+            }
+            if ($throughScheduleDay !== null && $feedingDay > $throughScheduleDay) {
+                continue;
+            }
+
+            $scheduleItem = $this->rangeService->resolveForMissedBackfillDay($batch->schedule, $feedingDay);
 
             if (!$scheduleItem) {
                 continue;
             }
-
-            $feedingDate = $arrival->copy()->addDays($day - 1)->toDateString();
 
             if (isset($existingDates[$feedingDate])) {
                 continue;
@@ -403,7 +408,7 @@ class FeedingMissedScheduleService
 
             $perBirdGrams = (float) $scheduleItem->quantity;
             $missed[] = [
-                'feeding_day' => $day,
+                'feeding_day' => $feedingDay,
                 'feeding_date' => $feedingDate,
                 'feeding_schedule_item_id' => (int) $scheduleItem->id,
                 'feed_type_id' => (int) $scheduleItem->feed_type_id,

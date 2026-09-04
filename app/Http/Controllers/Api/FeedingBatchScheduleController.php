@@ -92,7 +92,7 @@ class FeedingBatchScheduleController extends ApiController
         );
     }
 
-    public function show($id)
+    public function show($farm, $id)
     {
         $schedule = FeedingBatchSchedule::with(['flock', 'schedule'])->findOrFail($id);
         $farmId = $schedule->flock ? $schedule->flock->farm_id : null;
@@ -102,7 +102,7 @@ class FeedingBatchScheduleController extends ApiController
         return $this->sendResponse($schedule, 'Feeding batch schedule retrieved successfully');
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, $farm, $id)
     {
         $schedule = FeedingBatchSchedule::findOrFail($id);
         $farmId = $schedule->flock ? $schedule->flock->farm_id : null;
@@ -121,7 +121,7 @@ class FeedingBatchScheduleController extends ApiController
         return $this->sendResponse($schedule, 'Feeding batch schedule updated successfully');
     }
 
-    public function destroy($id)
+    public function destroy($farm, $id)
     {
         $schedule = FeedingBatchSchedule::findOrFail($id);
         $farmId = $schedule->flock ? $schedule->flock->farm_id : null;

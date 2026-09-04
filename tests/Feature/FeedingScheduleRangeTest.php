@@ -141,6 +141,22 @@ class FeedingScheduleRangeTest extends TestCase
         $this->assertEquals(50, (float) $this->rangeService->resolveForMissedBackfillDay($schedule, 120)->quantity);
     }
 
+    public function test_resolve_splits_across_closed_then_open_ended_ranges(): void
+    {
+        $schedule = $this->makeSchedule([
+            ['start_day' => 130, 'end_day' => 151, 'quantity' => 110],
+            ['start_day' => 152, 'end_day' => null, 'quantity' => 120],
+        ]);
+
+        $this->assertEquals(110, (float) $this->rangeService->resolveForDay($schedule, 130)->quantity);
+        $this->assertEquals(110, (float) $this->rangeService->resolveForDay($schedule, 151)->quantity);
+        $this->assertEquals(120, (float) $this->rangeService->resolveForDay($schedule, 152)->quantity);
+        $this->assertEquals(120, (float) $this->rangeService->resolveForDay($schedule, 200)->quantity);
+
+        $this->assertEquals(110, (float) $this->rangeService->resolveForMissedBackfillDay($schedule, 140)->quantity);
+        $this->assertEquals(120, (float) $this->rangeService->resolveForMissedBackfillDay($schedule, 180)->quantity);
+    }
+
     public function test_validate_rejects_overlaps_and_multiple_open_ended(): void
     {
         $overlap = $this->rangeService->validateRanges([

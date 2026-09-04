@@ -105,7 +105,7 @@ class FeedingScheduleItemController extends ApiController
         return $this->sendResponse($payload, 'Feeding schedule item created successfully', 201);
     }
 
-    public function show($id)
+    public function show($farm, $id)
     {
         $item = FeedingScheduleItem::with(['schedule', 'feedType'])->findOrFail($id);
         $farmId = $item->schedule ? $item->schedule->farm_id : null;
@@ -115,7 +115,7 @@ class FeedingScheduleItemController extends ApiController
         return $this->sendResponse($item, 'Feeding schedule item retrieved successfully');
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, $farm, $id)
     {
         $item = FeedingScheduleItem::findOrFail($id);
         $farmId = $item->schedule ? $item->schedule->farm_id : null;
@@ -182,7 +182,7 @@ class FeedingScheduleItemController extends ApiController
         return $this->sendResponse($payload, 'Feeding schedule item updated successfully');
     }
 
-    public function destroy($id)
+    public function destroy($farm, $id)
     {
         $item = FeedingScheduleItem::findOrFail($id);
         $farmId = $item->schedule ? $item->schedule->farm_id : null;
