@@ -7,6 +7,7 @@ use App\Notifications\NotificationTypeRegistry;
 use App\Services\Notifications\NotificationTemplateData;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
@@ -32,6 +33,10 @@ class NotificationMail extends Mailable
         $prefix = $this->subjectPrefix($registry->label($this->notification->type));
 
         return new Envelope(
+            from: new Address(
+                (string) config('mail.from.address'),
+                (string) config('mail.from.name'),
+            ),
             subject: trim($prefix . $this->notification->title),
         );
     }
