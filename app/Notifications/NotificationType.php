@@ -49,4 +49,5 @@ final class NotificationType
     public const SECURITY_NOTIFICATION = 'security_notification';
     public const SYSTEM_ANNOUNCEMENT = 'system_announcement';
     public const SYSTEM_ALERT = 'system_alert';
+    public const PLATFORM_BROADCAST = 'platform_broadcast';
 }

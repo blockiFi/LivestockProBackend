@@ -2,12 +2,18 @@
 
 namespace Tests\Feature\Admin;
 
+use App\Jobs\SendNotificationEmail;
 use App\Models\Notification;
+use App\Models\NotificationDelivery;
+use App\Notifications\NotificationChannel;
+use Illuminate\Support\Facades\Queue;
 
 class AdminBroadcastTest extends AdminTestCase
 {
     public function test_super_admin_can_broadcast_platform_notification(): void
     {
+        Queue::fake();
+
         $response = $this->withHeaders($this->adminHeaders())
             ->postJson('/api/admin/notifications/broadcast', [
                 'title' => 'Flock updates',
@@ -30,10 +36,23 @@ class AdminBroadcastTest extends AdminTestCase
             'title' => 'Flock updates',
         ]);
         $this->assertSame(2, Notification::where('type', 'platform_broadcast')->count());
+
+        $this->assertSame(
+            2,
+            NotificationDelivery::query()
+                ->where('channel', NotificationChannel::EMAIL)
+                ->where('status', 'queued')
+                ->count()
+        );
+
+        Queue::assertPushedOn(config('notifications.queue'), SendNotificationEmail::class);
+        Queue::assertPushed(SendNotificationEmail::class, 2);
     }
 
     public function test_broadcast_can_target_specific_farm_members(): void
     {
+        Queue::fake();
+
         $response = $this->withHeaders($this->adminHeaders())
             ->postJson('/api/admin/notifications/broadcast', [
                 'title' => 'Farm only',
@@ -54,5 +73,7 @@ class AdminBroadcastTest extends AdminTestCase
             'type' => 'platform_broadcast',
             'title' => 'Farm only',
         ]);
+
+        Queue::assertPushed(SendNotificationEmail::class, 1);
     }
 }

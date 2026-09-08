@@ -5,19 +5,18 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
 use App\Models\FarmUserInvitation;
-use App\Models\Notification;
 use App\Models\User;
-use App\Notifications\DeliveryStatus;
-use App\Notifications\NotificationPriority;
+use App\Services\Notifications\PlatformBroadcastNotifier;
 use App\Traits\LogsAdminAction;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class AdminNotificationController extends ApiController
 {
     use LogsAdminAction;
 
-    public function broadcast(Request $request): JsonResponse
+    public function broadcast(Request $request, PlatformBroadcastNotifier $notifier): JsonResponse
     {
         $validated = $request->validate([
             'title' => 'required|string|max:255',
@@ -32,36 +31,23 @@ class AdminNotificationController extends ApiController
             $query->whereHas('farms', fn ($q) => $q->whereIn('farms.id', $validated['farm_ids']));
         }
 
-        $now = now();
+        $batchKey = (string) Str::uuid();
         $count = 0;
 
-        $query->orderBy('id')->chunkById(200, function ($users) use ($validated, $now, &$count) {
-            $rows = [];
-            foreach ($users as $user) {
-                $rows[] = [
-                    'user_id' => $user->id,
-                    'farm_id' => null,
-                    'type' => 'platform_broadcast',
-                    'title' => $validated['title'],
-                    'body' => $validated['body'],
-                    'category' => 'system',
-                    'priority' => NotificationPriority::NORMAL,
-                    'status' => DeliveryStatus::DELIVERED,
-                    'available_at' => $now,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ];
-            }
-
-            if ($rows !== []) {
-                Notification::insert($rows);
-                $count += count($rows);
-            }
+        $query->orderBy('id')->chunkById(200, function ($users) use ($validated, $notifier, $batchKey, &$count) {
+            $sent = $notifier->broadcast(
+                $validated['title'],
+                $validated['body'],
+                $users->pluck('id')->all(),
+                $batchKey,
+            );
+            $count += $sent->count();
         });
 
         $this->logAdminAction($request, 'notification.broadcast', null, null, null, [
             'title' => $validated['title'],
             'recipients' => $count,
+            'batch_key' => $batchKey,
         ]);
 
         return $this->sendResponse(['recipients' => $count], 'Broadcast sent');

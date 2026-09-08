@@ -3,12 +3,11 @@
 namespace App\Services\Notifications;
 
 use App\Models\Equipment;
-use App\Models\Farm;
-use App\Models\User;
+use App\Models\Notification;
 use App\Notifications\NotificationMessage;
 use App\Notifications\NotificationPriority;
 use App\Notifications\NotificationType;
-use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
 
 class EquipmentNotifier
 {
@@ -18,11 +17,14 @@ class EquipmentNotifier
     {
     }
 
-    public function maintenanceDue(Equipment $equipment, int $daysUntil): void
+    /**
+     * @return Collection<int, Notification>
+     */
+    public function maintenanceDue(Equipment $equipment, int $daysUntil): Collection
     {
         $priority = $daysUntil <= 1 ? NotificationPriority::HIGH : NotificationPriority::NORMAL;
 
-        $this->notifications->send(
+        return $this->notifications->send(
             $this->base($equipment, NotificationType::EQUIPMENT_MAINTENANCE_DUE)
                 ->toFarmMembersWithPermission(...self::RECIPIENT_PERMISSIONS)
                 ->title('Maintenance due: ' . $equipment->name)
@@ -38,11 +40,14 @@ class EquipmentNotifier
         );
     }
 
-    public function warrantyExpiring(Equipment $equipment, int $daysUntil): void
+    /**
+     * @return Collection<int, Notification>
+     */
+    public function warrantyExpiring(Equipment $equipment, int $daysUntil): Collection
     {
         $priority = $daysUntil <= 7 ? NotificationPriority::HIGH : NotificationPriority::NORMAL;
 
-        $this->notifications->send(
+        return $this->notifications->send(
             $this->base($equipment, NotificationType::EQUIPMENT_WARRANTY_EXPIRING)
                 ->toFarmMembersWithPermission(...self::RECIPIENT_PERMISSIONS)
                 ->title('Warranty expiring: ' . $equipment->name)
