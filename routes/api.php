@@ -51,6 +51,7 @@ use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\AdministrationMethodController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\FlockMetricsAnalysisController;
+use App\Http\Controllers\Api\FlockBatchChatController;
 use App\Http\Controllers\Api\FlockNotificationController;
 use App\Http\Controllers\Api\FlockActivityReportController;
 use App\Http\Controllers\Api\FlockTransferController;
@@ -185,6 +186,21 @@ Route::middleware('auth:sanctum')->group(function () {
             // inside the payload is stripped for farms without an AI plan.
             Route::get('/{flock}/metrics/comparative', [FlockMetricsAnalysisController::class, 'comparative']);
             Route::post('/{flock}/metrics/comparative', [FlockMetricsAnalysisController::class, 'refreshComparative'])->middleware('farm.ai');
+
+            Route::prefix('{flock}/batch-chat')->middleware('farm.ai')->group(function () {
+                Route::get('/sessions', [FlockBatchChatController::class, 'indexSessions']);
+                Route::post('/sessions', [FlockBatchChatController::class, 'storeSession']);
+                Route::get('/sessions/{session}', [FlockBatchChatController::class, 'showSession']);
+                Route::patch('/sessions/{session}', [FlockBatchChatController::class, 'updateSession']);
+                Route::delete('/sessions/{session}', [FlockBatchChatController::class, 'destroySession']);
+                Route::get('/sessions/{session}/messages', [FlockBatchChatController::class, 'messages']);
+                Route::post('/sessions/{session}/messages', [FlockBatchChatController::class, 'postMessage']);
+                Route::post('/sessions/{session}/actions/{actionId}/confirm', [FlockBatchChatController::class, 'confirmAction']);
+                Route::post('/sessions/{session}/actions/{actionId}/cancel', [FlockBatchChatController::class, 'cancelAction']);
+                Route::get('/memories', [FlockBatchChatController::class, 'indexMemories']);
+                Route::delete('/memories', [FlockBatchChatController::class, 'destroyMemories']);
+            });
+
             Route::get('/{flock}/actual-quantity', [FlockController::class, 'getActualQuantity']);
             Route::get('/{flock}/notifications', [FlockNotificationController::class, 'index']);
             Route::get('/{flock}/activities', [FlockActivityReportController::class, 'index']);
