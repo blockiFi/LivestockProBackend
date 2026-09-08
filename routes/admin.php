@@ -7,6 +7,7 @@ use App\Http\Controllers\Admin\AdminFarmController;
 use App\Http\Controllers\Admin\AdminFarmSubscriptionController;
 use App\Http\Controllers\Admin\AdminImpersonationController;
 use App\Http\Controllers\Admin\AdminInventoryAlertController;
+use App\Http\Controllers\Admin\AdminNotificationController;
 use App\Http\Controllers\Admin\AdminPlatformSettingsController;
 use App\Http\Controllers\Admin\AdminReferenceDataController;
 use App\Http\Controllers\Admin\AdminResourceController;

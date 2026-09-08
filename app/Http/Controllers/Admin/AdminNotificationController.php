@@ -7,10 +7,11 @@ use App\Models\Farm;
 use App\Models\FarmUserInvitation;
 use App\Models\Notification;
 use App\Models\User;
+use App\Notifications\DeliveryStatus;
+use App\Notifications\NotificationPriority;
 use App\Traits\LogsAdminAction;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Mail;
 
 class AdminNotificationController extends ApiController
 {
@@ -20,32 +21,43 @@ class AdminNotificationController extends ApiController
     {
         $validated = $request->validate([
             'title' => 'required|string|max:255',
-            'body' => 'required|string|max:2000',
+            'body' => 'required|string|max:5000',
             'farm_ids' => 'nullable|array',
             'farm_ids.*' => 'integer|exists:farms,id',
         ]);
 
-        $query = User::query();
+        $query = User::query()->select('id');
 
         if (! empty($validated['farm_ids'])) {
             $query->whereHas('farms', fn ($q) => $q->whereIn('farms.id', $validated['farm_ids']));
         }
 
-        $users = $query->get();
+        $now = now();
         $count = 0;
 
-        foreach ($users as $user) {
-            Notification::create([
-                'user_id' => $user->id,
-                'type' => 'platform_broadcast',
-                'title' => $validated['title'],
-                'body' => $validated['body'],
-                'category' => 'system',
-                'priority' => 'normal',
-                'status' => 'unread',
-            ]);
-            $count++;
-        }
+        $query->orderBy('id')->chunkById(200, function ($users) use ($validated, $now, &$count) {
+            $rows = [];
+            foreach ($users as $user) {
+                $rows[] = [
+                    'user_id' => $user->id,
+                    'farm_id' => null,
+                    'type' => 'platform_broadcast',
+                    'title' => $validated['title'],
+                    'body' => $validated['body'],
+                    'category' => 'system',
+                    'priority' => NotificationPriority::NORMAL,
+                    'status' => DeliveryStatus::DELIVERED,
+                    'available_at' => $now,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
+
+            if ($rows !== []) {
+                Notification::insert($rows);
+                $count += count($rows);
+            }
+        });
 
         $this->logAdminAction($request, 'notification.broadcast', null, null, null, [
             'title' => $validated['title'],
