@@ -254,7 +254,9 @@ class FlockRecordImportCommitService
             'store',
             $payload,
             $user,
-            [$farm->id]
+            [$farm->id],
+            // Historical imports often backdate sales relative to egg collections; do not block on as-of-date stock.
+            ['skip_egg_stock_check' => true]
         );
         $data = $this->assertOk($response);
 
@@ -265,11 +267,25 @@ class FlockRecordImportCommitService
      * @param  array<string, mixed>  $payload
      * @param  list<mixed>  $routeParams
      */
-    private function callController(string $controllerClass, string $method, array $payload, User $user, array $routeParams): JsonResponse
-    {
+    /**
+     * @param  array<string, mixed>  $payload
+     * @param  list<mixed>  $routeParams
+     * @param  array<string, mixed>  $attributes
+     */
+    private function callController(
+        string $controllerClass,
+        string $method,
+        array $payload,
+        User $user,
+        array $routeParams,
+        array $attributes = []
+    ): JsonResponse {
         $request = Request::create('/', 'POST', $payload);
         $request->setUserResolver(static fn () => $user);
         $request->headers->set('Accept', 'application/json');
+        foreach ($attributes as $key => $value) {
+            $request->attributes->set($key, $value);
+        }
 
         /** @var object $controller */
         $controller = app($controllerClass);

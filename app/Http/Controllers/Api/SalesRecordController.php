@@ -139,7 +139,8 @@ class SalesRecordController extends ApiController
             }
         }
 
-        if ($type === 'egg' && $flockId) {
+        // Bulk flock-record import sets this attribute so historical egg sales are not blocked by as-of-date stock.
+        if ($type === 'egg' && $flockId && ! $request->attributes->get('skip_egg_stock_check')) {
             $check = $this->profitLossService->validateEggSaleQuantity(
                 (int) $farmId,
                 (int) $flockId,

@@ -259,6 +259,50 @@ class FlockRecordImportTest extends TestCase
         ]);
     }
 
+    public function test_confirm_egg_sales_skip_as_of_date_stock_check(): void
+    {
+        $draft = FlockRecordImport::create([
+            'farm_id' => $this->farm->id,
+            'flock_id' => $this->flock->id,
+            'created_by' => $this->user->id,
+            'source_method' => 'file',
+            'source_type' => 'csv',
+            'status' => 'draft',
+        ]);
+
+        // Eggs collected after the sale date — as-of-date stock for the sale would be 0.
+        $draft->items()->create([
+            'record_type' => 'eggs',
+            'row_index' => 0,
+            'payload' => ['date' => '2026-05-10', 'eggs_collected' => 200],
+            'status' => 'valid',
+        ]);
+        $draft->items()->create([
+            'record_type' => 'product_sale',
+            'row_index' => 1,
+            'payload' => [
+                'date' => '2026-05-01',
+                'type' => 'egg',
+                'quantity' => 90,
+                'unit_price' => 50,
+            ],
+            'status' => 'valid',
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer '.$this->token)
+            ->postJson($this->baseUrl()."/{$draft->id}/confirm");
+
+        $response->assertStatus(200)
+            ->assertJsonPath('data.summary.succeeded', 2)
+            ->assertJsonPath('data.summary.failed', 0);
+
+        $this->assertDatabaseHas('sales_records', [
+            'flock_id' => $this->flock->id,
+            'type' => 'egg',
+            'quantity' => 90,
+        ]);
+    }
+
     public function test_overlap_marks_typed_row_invalid(): void
     {
         $csv = "record_type,date,mortality_count,average_weight,eggs_collected,feed_consumption_kg\n"

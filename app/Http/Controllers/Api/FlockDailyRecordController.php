@@ -621,7 +621,7 @@ class FlockDailyRecordController extends ApiController
             return;
         }
 
-        $birdCount = (int) ($flock->quantity ?? 0);
+        $birdCount = $flock->birdCountOnDate($date);
         $productionPct = $birdCount > 0
             ? round(($eggsCollected / $birdCount) * 100, 2)
             : 0;
