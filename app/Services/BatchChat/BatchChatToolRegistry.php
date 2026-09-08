@@ -63,7 +63,7 @@ class BatchChatToolRegistry
             ],
             [
                 'name' => 'list_recent_records',
-                'description' => 'List recent records of a given type for this batch.',
+                'description' => 'List flock records by type. ALWAYS pass date_from and date_to for month/range questions (e.g. all of August). Embedded context only has ~14 recent days. Returns rows plus summary totals.',
                 'parameters' => [
                     'type' => 'object',
                     'properties' => [
@@ -71,7 +71,20 @@ class BatchChatToolRegistry
                             'type' => 'string',
                             'enum' => ['daily', 'mortality', 'eggs', 'weights', 'feed', 'medications', 'vaccinations', 'expenditures', 'bird_sales', 'product_sales'],
                         ],
-                        'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 30],
+                        'date_from' => [
+                            'type' => 'string',
+                            'description' => 'Inclusive start date YYYY-MM-DD. Required for historical/month queries.',
+                        ],
+                        'date_to' => [
+                            'type' => 'string',
+                            'description' => 'Inclusive end date YYYY-MM-DD. Required for historical/month queries.',
+                        ],
+                        'limit' => [
+                            'type' => 'integer',
+                            'minimum' => 1,
+                            'maximum' => 300,
+                            'description' => 'Max rows to return (default 200 with a date range, else 14).',
+                        ],
                     ],
                     'required' => ['type'],
                     'additionalProperties' => false,
@@ -84,8 +97,15 @@ class BatchChatToolRegistry
             ],
             [
                 'name' => 'get_profit_loss',
-                'description' => 'Get profit and loss summary for this batch.',
-                'parameters' => ['type' => 'object', 'properties' => (object) [], 'additionalProperties' => false],
+                'description' => 'Get profit and loss summary for this batch. Pass date_from/date_to to scope a month or custom range.',
+                'parameters' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'date_from' => ['type' => 'string', 'description' => 'Inclusive start YYYY-MM-DD'],
+                        'date_to' => ['type' => 'string', 'description' => 'Inclusive end YYYY-MM-DD'],
+                    ],
+                    'additionalProperties' => false,
+                ],
             ],
             [
                 'name' => 'create_daily_record',

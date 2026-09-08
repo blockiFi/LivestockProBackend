@@ -408,4 +408,68 @@ class FlockBatchChatTest extends TestCase
             FlockDailyRecord::where('flock_id', $this->flock->id)->whereDate('date', $date)->exists()
         );
     }
+
+    public function test_list_recent_records_supports_full_month_date_range(): void
+    {
+        \App\Models\SalesRecord::create([
+            'farm_id' => $this->farm->id,
+            'flock_id' => $this->flock->id,
+            'type' => 'egg',
+            'quantity' => 100,
+            'unit_price' => 50,
+            'total_amount' => 5000,
+            'amount_paid' => 5000,
+            'date' => '2026-08-05',
+            'payment_status' => 'paid',
+            'created_by' => $this->user->id,
+        ]);
+        \App\Models\SalesRecord::create([
+            'farm_id' => $this->farm->id,
+            'flock_id' => $this->flock->id,
+            'type' => 'egg',
+            'quantity' => 200,
+            'unit_price' => 50,
+            'total_amount' => 10000,
+            'amount_paid' => 10000,
+            'date' => '2026-08-31',
+            'payment_status' => 'paid',
+            'created_by' => $this->user->id,
+        ]);
+        // Outside August — must not appear
+        \App\Models\SalesRecord::create([
+            'farm_id' => $this->farm->id,
+            'flock_id' => $this->flock->id,
+            'type' => 'egg',
+            'quantity' => 50,
+            'unit_price' => 50,
+            'total_amount' => 2500,
+            'amount_paid' => 2500,
+            'date' => '2026-07-20',
+            'payment_status' => 'paid',
+            'created_by' => $this->user->id,
+        ]);
+
+        $executor = app(\App\Services\BatchChat\BatchChatToolExecutor::class);
+        $result = $executor->execute(
+            'list_recent_records',
+            [
+                'type' => 'product_sales',
+                'date_from' => '2026-08-01',
+                'date_to' => '2026-08-31',
+                'limit' => 200,
+            ],
+            $this->farm,
+            $this->flock,
+            $this->user
+        );
+
+        $this->assertTrue($result['ok']);
+        $rows = $result['data']['rows'] ?? [];
+        $this->assertCount(2, $rows);
+        $dates = collect($rows)->pluck('date')->all();
+        $this->assertContains('2026-08-05', $dates);
+        $this->assertContains('2026-08-31', $dates);
+        $this->assertSame(300.0, (float) $result['data']['summary']['total_quantity']);
+        $this->assertSame(15000.0, (float) $result['data']['summary']['total_amount']);
+    }
 }

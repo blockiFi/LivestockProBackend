@@ -52,7 +52,12 @@ class BatchChatToolExecutor
             'list_recent_records' => $this->listRecent($flock, $args),
             'get_schedule_status' => $this->scheduleStatus($flock),
             'get_profit_loss' => $this->ok('Profit & loss', [
-                'profit_loss' => $this->profitLoss->flockSummary((int) $farm->id, (int) $flock->id),
+                'profit_loss' => $this->profitLoss->flockSummary(
+                    (int) $farm->id,
+                    (int) $flock->id,
+                    isset($args['date_from']) ? (string) $args['date_from'] : null,
+                    isset($args['date_to']) ? (string) $args['date_to'] : null
+                ),
             ], []),
             'create_daily_record' => $this->createDaily($farm, $flock, $user, $args),
             'create_mortality_report' => $this->createMortality($farm, $flock, $user, $args),
@@ -115,28 +120,32 @@ class BatchChatToolExecutor
 
     private function listRecent(Flock $flock, array $args): array
     {
-        $ctx = $this->context->build($flock);
         $type = (string) ($args['type'] ?? 'daily');
-        $map = [
-            'daily' => 'daily_records',
-            'mortality' => 'mortality',
-            'eggs' => 'eggs',
-            'weights' => 'weights',
-            'feed' => 'feed_usages',
-            'medications' => 'medications',
-            'vaccinations' => 'vaccinations',
-            'expenditures' => 'expenditures',
-            'bird_sales' => 'bird_sales',
-            'product_sales' => 'product_sales',
+        $allowed = [
+            'daily', 'mortality', 'eggs', 'weights', 'feed', 'medications',
+            'vaccinations', 'expenditures', 'bird_sales', 'product_sales',
         ];
-        $key = $map[$type] ?? null;
-        if (! $key) {
+        if (! in_array($type, $allowed, true)) {
             return $this->fail('Invalid record type');
         }
-        $rows = $ctx['recent'][$key] ?? [];
-        $limit = min(30, max(1, (int) ($args['limit'] ?? 14)));
 
-        return $this->ok('Recent records', ['type' => $type, 'rows' => array_slice($rows, 0, $limit)], []);
+        $dateFrom = isset($args['date_from']) && $args['date_from'] !== ''
+            ? (string) $args['date_from']
+            : null;
+        $dateTo = isset($args['date_to']) && $args['date_to'] !== ''
+            ? (string) $args['date_to']
+            : null;
+
+        // Default window stays ~14 days when no range is provided (matches embedded context).
+        if ($dateFrom === null && $dateTo === null) {
+            $dateFrom = Carbon::today()->subDays(13)->toDateString();
+            $dateTo = Carbon::today()->toDateString();
+        }
+
+        $limit = min(300, max(1, (int) ($args['limit'] ?? ($dateFrom && $dateTo ? 200 : 14))));
+        $payload = $this->context->listRecords($flock, $type, $dateFrom, $dateTo, $limit);
+
+        return $this->ok('Records', $payload, []);
     }
 
     private function scheduleStatus(Flock $flock): array
