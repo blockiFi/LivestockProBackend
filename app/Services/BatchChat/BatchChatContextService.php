@@ -208,11 +208,12 @@ class BatchChatContextService
             ->whereDate('usage_date', '>=', $since)
             ->orderByDesc('usage_date')
             ->limit(14)
-            ->get(['usage_date', 'quantity', 'notes'])
+            ->get(['usage_date', 'quantity', 'poultry_feed_type_id', 'unit_cost'])
             ->map(fn ($r) => [
                 'date' => optional($r->usage_date)?->toDateString() ?? (string) $r->usage_date,
                 'kg' => (float) $r->quantity,
-                'notes' => $r->notes,
+                'poultry_feed_type_id' => (int) ($r->poultry_feed_type_id ?? 0),
+                'unit_cost' => (float) ($r->unit_cost ?? 0),
             ])->values()->all();
     }
 
