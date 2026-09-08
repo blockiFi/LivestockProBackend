@@ -50,4 +50,9 @@ final class NotificationType
     public const SYSTEM_ANNOUNCEMENT = 'system_announcement';
     public const SYSTEM_ALERT = 'system_alert';
     public const PLATFORM_BROADCAST = 'platform_broadcast';
+
+    // Customer accounts
+    public const CUSTOMER_ACCOUNT_TOP_UP = 'customer_account_top_up';
+    public const CUSTOMER_ACCOUNT_PAYMENT = 'customer_account_payment';
+    public const CUSTOMER_ACCOUNT_LOW_BALANCE = 'customer_account_low_balance';
 }

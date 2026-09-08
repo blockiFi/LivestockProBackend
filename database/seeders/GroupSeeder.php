@@ -218,6 +218,12 @@ class GroupSeeder extends Seeder
                     'update customers',
                     'delete customers',
                     'manage customers',
+                    'view customer accounts',
+                    'top up customer accounts',
+                    'use customer account for payment',
+                    'adjust customer accounts',
+                    'refund customer accounts',
+                    'reverse customer account transactions',
                 ]
             ],
             [

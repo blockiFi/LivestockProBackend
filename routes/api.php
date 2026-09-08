@@ -48,6 +48,7 @@ use App\Http\Controllers\Api\FlockSaleController;
 use App\Http\Controllers\Api\SalesStatisticsController;
 use App\Http\Controllers\Api\SalesRecordController;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\CustomerAccountController;
 use App\Http\Controllers\Api\AdministrationMethodController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\FlockMetricsAnalysisController;
@@ -288,6 +289,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('/{record}', [SalesRecordController::class, 'destroy']);
         });
 
+        Route::get('farms/{farm}/customer-accounts/summary', [CustomerAccountController::class, 'farmSummary']);
+
         Route::prefix('farms/{farm}/customers')->group(function () {
             Route::get('/', [CustomerController::class, 'index']);
             Route::post('/', [CustomerController::class, 'store']);
@@ -296,6 +299,14 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('/{customer}', [CustomerController::class, 'destroy']);
             Route::get('/{customer}/history', [CustomerController::class, 'history']);
             Route::post('/{customer}/payments', [CustomerController::class, 'recordPayment']);
+
+            Route::get('/{customer}/account', [CustomerAccountController::class, 'show']);
+            Route::post('/{customer}/account/top-ups', [CustomerAccountController::class, 'topUp']);
+            Route::get('/{customer}/account/statement', [CustomerAccountController::class, 'statement']);
+            Route::get('/{customer}/account/statement/export', [CustomerAccountController::class, 'exportStatement']);
+            Route::post('/{customer}/account/adjustments', [CustomerAccountController::class, 'adjust']);
+            Route::post('/{customer}/account/refunds', [CustomerAccountController::class, 'refundSale']);
+            Route::post('/{customer}/account/transactions/{transaction}/reverse', [CustomerAccountController::class, 'reverse']);
         });
 
     

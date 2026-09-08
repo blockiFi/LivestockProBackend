@@ -34,6 +34,8 @@ class PermissionSeeder extends Seeder
             'create records', 'delete records', 'manage records', 'manage mortality records', 'manage weight records', 'manage egg records', 'update records', 'view egg records', 'view mortality records', 'view records', 'view weight records',
             // Customer Management
             'create customers', 'delete customers', 'manage customers', 'update customers', 'view customers',
+            'view customer accounts', 'top up customer accounts', 'use customer account for payment',
+            'adjust customer accounts', 'refund customer accounts', 'reverse customer account transactions',
             // Sales Management
             'create sales', 'delete sales', 'manage sales', 'update sales', 'view sales',
             // Invoice Management

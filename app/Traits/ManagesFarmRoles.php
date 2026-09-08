@@ -216,6 +216,12 @@ trait ManagesFarmRoles
             'update customers',
             'delete customers',
             'manage customers',
+            'view customer accounts',
+            'top up customer accounts',
+            'use customer account for payment',
+            'adjust customer accounts',
+            'refund customer accounts',
+            'reverse customer account transactions',
 
             // Sales Management
             'view sales',
@@ -295,6 +301,8 @@ trait ManagesFarmRoles
                     'view flock mortality reports',
                     'view flock egg reports',
                     'view customers',
+                    'view customer accounts',
+                    'use customer account for payment',
                     'view sales',
                     'view invoices',
                 ], true);

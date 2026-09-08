@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Models\Customer;
 use App\Models\Farm;
+use App\Exceptions\InsufficientCustomerAccountBalance;
+use App\Services\CustomerAccountService;
 use App\Services\CustomerPaymentService;
 use App\Services\CustomerService;
 use Illuminate\Http\Request;
@@ -13,7 +15,8 @@ class CustomerController extends ApiController
 {
     public function __construct(
         private readonly CustomerService $customerService,
-        private readonly CustomerPaymentService $paymentService
+        private readonly CustomerPaymentService $paymentService,
+        private readonly CustomerAccountService $accounts,
     ) {
     }
 
@@ -62,8 +65,10 @@ class CustomerController extends ApiController
             ['farm_id' => $farm->id, 'is_active' => $request->boolean('is_active', true)]
         ));
 
+        $this->accounts->ensureAccount($customer);
+
         return $this->sendResponse(
-            $customer->load('country:id,name,iso_code'),
+            $customer->load(['country:id,name,iso_code', 'account']),
             'Customer created successfully',
             201
         );
@@ -78,12 +83,17 @@ class CustomerController extends ApiController
         }
 
         $customer = Customer::where('farm_id', $farm->id)
-            ->with('country:id,name,iso_code')
+            ->with(['country:id,name,iso_code', 'account'])
             ->findOrFail($customerId);
 
+        $account = $this->accounts->getBalance($customer);
+
         return $this->sendResponse([
-            'customer' => $customer,
+            'customer' => $customer->load('account'),
             'summary' => $this->customerService->summary($customer),
+            'account' => $account,
+            'recent_account_transactions' => $this->accounts->recentTransactions($customer, 10),
+            'is_low_balance' => $account->isLowBalance(),
         ], 'Customer retrieved successfully');
     }
 
@@ -159,13 +169,25 @@ class CustomerController extends ApiController
         $validator = Validator::make($request->all(), [
             'type' => 'required|in:product,invoice',
             'id' => 'required|integer|min:1',
-            'amount' => 'required|numeric|min:0.01',
+            'amount' => 'nullable|numeric|min:0',
             'payment_method' => 'nullable|string|max:50',
+            'payment_mode' => 'nullable|in:cash,bank_transfer,pos,other,customer_account,account_and_other',
+            'account_amount' => 'nullable|numeric|min:0',
+            'other_amount' => 'nullable|numeric|min:0',
+            'other_payment_method' => 'nullable|in:cash,bank_transfer,pos,other',
+            'idempotency_key' => 'nullable|string|max:191',
             'notes' => 'nullable|string|max:1000',
         ]);
 
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $amount = (float) $request->input('amount', 0);
+        if ($amount <= 0 && ! in_array($request->input('payment_mode'), ['customer_account', 'account_and_other'], true)) {
+            return $this->sendValidationError('Validation failed', [
+                'amount' => ['The amount field is required and must be greater than 0.'],
+            ]);
         }
 
         try {
@@ -174,10 +196,18 @@ class CustomerController extends ApiController
                 $customer,
                 $request->input('type'),
                 (int) $request->input('id'),
-                (float) $request->input('amount'),
+                $amount,
                 $request->input('payment_method'),
-                $request->input('notes')
+                $request->input('notes'),
+                $request->input('payment_mode'),
+                $request->filled('account_amount') ? (float) $request->input('account_amount') : null,
+                $request->filled('other_amount') ? (float) $request->input('other_amount') : null,
+                $request->input('other_payment_method'),
+                $request->input('idempotency_key'),
+                $request->user(),
             );
+        } catch (InsufficientCustomerAccountBalance $e) {
+            return $this->sendValidationError($e->getMessage(), $e->toArray());
         } catch (\InvalidArgumentException $e) {
             return $this->sendError($e->getMessage(), [], 422);
         }
@@ -191,6 +221,7 @@ class CustomerController extends ApiController
                 'payment_status' => $result['payment_status'],
             ],
             'summary' => $this->customerService->summary($customer),
+            'account' => $this->accounts->getBalance($customer),
         ], 'Payment recorded successfully');
     }
 
@@ -203,6 +234,8 @@ class CustomerController extends ApiController
             'manage customers',
             'update customers',
             'create sales',
+            'use customer account for payment',
+            'top up customer accounts',
         ]);
     }
 

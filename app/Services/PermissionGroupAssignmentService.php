@@ -80,6 +80,8 @@ class PermissionGroupAssignmentService
             ],
             'Customer Management' => [
                 'view customers', 'create customers', 'update customers', 'delete customers', 'manage customers',
+                'view customer accounts', 'top up customer accounts', 'use customer account for payment',
+                'adjust customer accounts', 'refund customer accounts', 'reverse customer account transactions',
             ],
             'Sales Management' => [
                 'view sales', 'create sales', 'update sales', 'delete sales', 'manage sales',
