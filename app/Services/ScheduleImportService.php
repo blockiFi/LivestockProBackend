@@ -49,10 +49,17 @@ class ScheduleImportService
 
         $system = 'You are an expert poultry farm schedule planner. '
             . 'Extract vaccination, medication and feeding schedules from the provided document. '
-            . 'Return ONLY valid JSON and nothing else. '
-            . 'CRITICAL: First detect how the feeding section is structured in the document and set feeding_layout: '
+            . 'Return ONLY a single valid JSON object (no markdown, no commentary). '
+            . 'Documents may contain ONLY vaccinations, ONLY medications, ONLY feedings, or any mix — extract whatever is present and use empty arrays for missing sections. '
+            . 'Vaccination programme tables (columns like DAYS/WEEK/VACCINE/STRAIN/METHOD) must be extracted as vaccinations: '
+            . 'age_days from the day number (e.g. "Day 1" → 1, "Day 112" → 112); '
+            . 'name from the vaccine/medication label (include strain in name or description when shown); '
+            . 'put administration method (Water, I/M, S/C, Wing web, etc.) and strain into description/notes; '
+            . 'dose may be null when not specified. '
+            . 'CRITICAL for feedings only: First detect how the feeding section is structured and set feeding_layout: '
             . '"range" when the document groups feed by week, age span, or day ranges (e.g. "Week 1", "Days 1-7", "Day 14 onwards", same feed/rate across consecutive days); '
             . '"per_day" when the document is a daily table with one row per flock day (Day 1, Day 2, Day 3…) and values may differ per day. '
+            . 'If there is no feeding section, set feeding_layout to "range" and feeding_layout_reason to "No feeding schedule in document". '
             . 'Set feeding_layout_reason to a short explanation of why you chose that layout. '
             . 'For feedings, ALWAYS provide feeding_times (at least 2 time slots if the document does not specify), '
             . 'and ALWAYS provide a human-friendly name and description (you may infer sensible defaults). '
@@ -65,18 +72,18 @@ class ScheduleImportService
             . 'feeding_day is optional and, if present, must equal start_day. '
             . 'CRITICAL: For each feeding item, set feed_type_name to one of the available feed types (exact match) when possible. '
             . 'JSON schema: {"feeding_layout":"range"|"per_day","feeding_layout_reason":string|null,'
-            . '"vaccinations":[{age_days:int,name:string,dose:int,withdrawal_period_days:int|null,storage_instructions:string|null,description:string|null,confidence:number|null,notes:string|null}],'
-            . '"medications":[{age_days:int,name:string,dose:int,withdrawal_period_days:int|null,storage_instructions:string|null,description:string|null,confidence:number|null,notes:string|null}],'
+            . '"vaccinations":[{age_days:int,name:string,dose:int|null,withdrawal_period_days:int|null,storage_instructions:string|null,description:string|null,confidence:number|null,notes:string|null}],'
+            . '"medications":[{age_days:int,name:string,dose:int|null,withdrawal_period_days:int|null,storage_instructions:string|null,description:string|null,confidence:number|null,notes:string|null}],'
             . '"feedings":[{start_day:int,end_day:int|null,feeding_day:int|null,name:string,description:string|null,feed_type_name:string|null,quantity:number|null,feeding_times:[{time:string,percentage:number}],confidence:number|null,notes:string|null}]}. '
             . 'If a field is missing, use null (or omit optional fields).';
 
         $userText = 'Extract schedules from this document for poultry_type_id=' . $poultryTypeId . ".\n\n"
             . $feedTypeHint . "\n\n"
-            . 'Step 1: Decide feeding_layout ("range" vs "per_day") from how the feeding table is organized in the document. '
-            . 'Step 2: Extract feedings using the rules for that layout. '
-            . 'Important: output JSON only.';
+            . 'Step 1: Extract every vaccination and medication row (if any), including age in days. '
+            . 'Step 2: If a feeding section exists, decide feeding_layout ("range" vs "per_day") and extract feedings; otherwise return feedings=[]. '
+            . 'Important: output one JSON object only.';
 
-        $raw = $this->llm->visionChatMany($system, $userText, $vision['images']);
+        $raw = $this->llm->visionChatMany($system, $userText, $vision['images'], ['json' => true]);
         if (!$raw) {
             $detail = method_exists($this->llm, 'getLastError') ? $this->llm->getLastError() : null;
             $msg = 'LLM unavailable or returned empty response' . ($detail ? (': ' . $detail) : '');
@@ -84,14 +91,24 @@ class ScheduleImportService
         }
 
         $json = $this->safeJsonDecode($raw);
-        if (!$json) {
+        if ($json === null) {
+            $draft->update([
+                'llm_provider' => config('llm.provider', 'openai'),
+                'llm_model' => config('llm.openai.model', null),
+                'llm_raw_response' => $raw,
+            ]);
+
             return ['ai_available' => true, 'warnings' => array_merge($warnings, ['LLM response was not valid JSON'])];
         }
 
-        DB::transaction(function () use ($draft, $raw, $json, $poultryTypeId, $feedTypeNames, &$warnings) {
+        $vaccinations = $this->extractItemList($json, ['vaccinations', 'vaccination', 'vaccines', 'vaccine']);
+        $medications = $this->extractItemList($json, ['medications', 'medication', 'medicines', 'medicine', 'meds']);
+        $feedings = $this->extractItemList($json, ['feedings', 'feeding', 'feeds', 'feed']);
+
+        DB::transaction(function () use ($draft, $raw, $json, $poultryTypeId, $vaccinations, $medications, $feedings, &$warnings) {
             $feedingLayout = $this->resolveFeedingLayout(
                 $json['feeding_layout'] ?? null,
-                $json['feedings'] ?? []
+                $feedings
             );
             $layoutReason = is_string($json['feeding_layout_reason'] ?? null)
                 ? trim($json['feeding_layout_reason'])
@@ -105,44 +122,55 @@ class ScheduleImportService
                 'feeding_layout_reason' => $layoutReason ?: $this->defaultLayoutReason($feedingLayout),
             ]);
 
-            $warnings[] = $feedingLayout === 'per_day'
-                ? 'Detected day-by-day feeding table in the document.'
-                : 'Detected feeding schedule with day ranges (weeks/spans).';
+            if ($feedings !== []) {
+                $warnings[] = $feedingLayout === 'per_day'
+                    ? 'Detected day-by-day feeding table in the document.'
+                    : 'Detected feeding schedule with day ranges (weeks/spans).';
+            }
 
             ScheduleImportItem::where('schedule_import_id', $draft->id)->delete();
 
-            foreach (($json['vaccinations'] ?? []) as $it) {
+            foreach ($vaccinations as $it) {
+                if (!is_array($it)) {
+                    continue;
+                }
                 ScheduleImportItem::create([
                     'schedule_import_id' => $draft->id,
                     'kind' => 'vaccination',
-                    'age_days' => isset($it['age_days']) ? (int) $it['age_days'] : null,
-                    'name' => $it['name'] ?? null,
-                    'dose' => isset($it['dose']) ? (int) $it['dose'] : null,
-                    'withdrawal_period_days' => isset($it['withdrawal_period_days']) ? (int) $it['withdrawal_period_days'] : null,
+                    'age_days' => $this->parseAgeDays($it),
+                    'name' => $this->firstString($it, ['name', 'vaccine', 'vaccine_name', 'medication']) ?: null,
+                    'dose' => $this->parseOptionalInt($it['dose'] ?? null),
+                    'withdrawal_period_days' => $this->parseOptionalInt($it['withdrawal_period_days'] ?? null),
                     'storage_instructions' => $it['storage_instructions'] ?? null,
-                    'description' => $it['description'] ?? null,
+                    'description' => $this->composeDescription($it),
                     'confidence' => $it['confidence'] ?? null,
-                    'notes' => $it['notes'] ?? null,
+                    'notes' => $this->composeNotes($it),
                 ]);
             }
 
-            foreach (($json['medications'] ?? []) as $it) {
+            foreach ($medications as $it) {
+                if (!is_array($it)) {
+                    continue;
+                }
                 ScheduleImportItem::create([
                     'schedule_import_id' => $draft->id,
                     'kind' => 'medication',
-                    'age_days' => isset($it['age_days']) ? (int) $it['age_days'] : null,
-                    'name' => $it['name'] ?? null,
-                    'dose' => isset($it['dose']) ? (int) $it['dose'] : null,
-                    'withdrawal_period_days' => isset($it['withdrawal_period_days']) ? (int) $it['withdrawal_period_days'] : null,
+                    'age_days' => $this->parseAgeDays($it),
+                    'name' => $this->firstString($it, ['name', 'medication', 'medicine', 'vaccine']) ?: null,
+                    'dose' => $this->parseOptionalInt($it['dose'] ?? null),
+                    'withdrawal_period_days' => $this->parseOptionalInt($it['withdrawal_period_days'] ?? null),
                     'storage_instructions' => $it['storage_instructions'] ?? null,
-                    'description' => $it['description'] ?? null,
+                    'description' => $this->composeDescription($it),
                     'confidence' => $it['confidence'] ?? null,
-                    'notes' => $it['notes'] ?? null,
+                    'notes' => $this->composeNotes($it),
                 ]);
             }
 
             $feedingRows = [];
-            foreach (($json['feedings'] ?? []) as $it) {
+            foreach ($feedings as $it) {
+                if (!is_array($it)) {
+                    continue;
+                }
                 $feedTypeId = null;
                 $feedTypeName = $it['feed_type_name'] ?? null;
                 if (is_string($feedTypeName) && $feedTypeName !== '') {
@@ -624,16 +652,149 @@ class ScheduleImportService
     protected function safeJsonDecode(string $raw): ?array
     {
         $raw = trim($raw);
+        if ($raw === '') {
+            return null;
+        }
 
-        // Some models wrap JSON in code fences; strip if present.
-        if (str_starts_with($raw, '```')) {
-            $raw = preg_replace('/^```[a-zA-Z0-9]*\\s*/', '', $raw);
-            $raw = preg_replace('/\\s*```$/', '', $raw);
-            $raw = trim($raw);
+        // Prefer fenced JSON anywhere in the response (models often wrap with ```json).
+        if (preg_match('/```(?:json)?\s*([\s\S]*?)```/i', $raw, $m)) {
+            $raw = trim($m[1]);
         }
 
         $decoded = json_decode($raw, true);
-        return is_array($decoded) ? $decoded : null;
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+
+        // Fallback: extract the outermost JSON object if the model added preamble/trailing text.
+        $start = strpos($raw, '{');
+        $end = strrpos($raw, '}');
+        if ($start !== false && $end !== false && $end > $start) {
+            $decoded = json_decode(substr($raw, $start, $end - $start + 1), true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $json
+     * @param  list<string>  $keys
+     * @return list<mixed>
+     */
+    protected function extractItemList(array $json, array $keys): array
+    {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $json)) {
+                continue;
+            }
+            $value = $json[$key];
+            if (!is_array($value)) {
+                continue;
+            }
+            // Single object accidentally returned instead of a list.
+            if ($value !== [] && !array_is_list($value)) {
+                return [$value];
+            }
+
+            return array_values($value);
+        }
+
+        return [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    protected function parseAgeDays(array $row): ?int
+    {
+        foreach (['age_days', 'day', 'days', 'age', 'age_day'] as $key) {
+            if (!array_key_exists($key, $row) || $row[$key] === null || $row[$key] === '') {
+                continue;
+            }
+            if (is_numeric($row[$key])) {
+                return (int) $row[$key];
+            }
+            if (is_string($row[$key]) && preg_match('/(\d+)/', $row[$key], $m)) {
+                return (int) $m[1];
+            }
+        }
+
+        return null;
+    }
+
+    protected function parseOptionalInt(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (is_numeric($value)) {
+            return (int) $value;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @param  list<string>  $keys
+     */
+    protected function firstString(array $row, array $keys): ?string
+    {
+        foreach ($keys as $key) {
+            $value = $row[$key] ?? null;
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    protected function composeDescription(array $row): ?string
+    {
+        $parts = [];
+        $description = $this->firstString($row, ['description']);
+        if ($description) {
+            $parts[] = $description;
+        }
+        $strain = $this->firstString($row, ['vaccine_strain', 'strain', 'vaccine_strain_name']);
+        if ($strain) {
+            $parts[] = 'Strain: ' . $strain;
+        }
+        $method = $this->firstString($row, ['method', 'administration_method', 'route']);
+        if ($method) {
+            $parts[] = 'Method: ' . $method;
+        }
+
+        if ($parts === []) {
+            return null;
+        }
+
+        return implode(' · ', $parts);
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    protected function composeNotes(array $row): ?string
+    {
+        $notes = $this->firstString($row, ['notes', 'note']);
+        $week = $row['week'] ?? $row['weeks'] ?? null;
+        $extra = [];
+        if ($notes) {
+            $extra[] = $notes;
+        }
+        if ($week !== null && $week !== '') {
+            $extra[] = 'Week: ' . (is_scalar($week) ? (string) $week : json_encode($week));
+        }
+
+        return $extra === [] ? null : implode(' · ', $extra);
     }
 
     protected function guessMimeFromPath(string $path): ?string

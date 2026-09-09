@@ -39,7 +39,7 @@ class FlockRecordImportAiService
             if ($vision === []) {
                 return ['ai_available' => false, 'warnings' => $warnings ?: ['Unable to build vision input']];
             }
-            $raw = $this->llm->visionChatMany($this->systemPrompt($farm), $this->userPrompt(), $vision);
+            $raw = $this->llm->visionChatMany($this->systemPrompt($farm), $this->userPrompt(), $vision, ['json' => true]);
         } else {
             // Spreadsheet: send a textual excerpt to the LLM
             try {

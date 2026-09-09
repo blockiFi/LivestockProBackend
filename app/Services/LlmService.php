@@ -179,7 +179,11 @@ class LlmService
      *
      * @param array<int,array{mime:string,base64:string}> $images
      */
-    public function visionChatMany(string $systemPrompt, string $userPrompt, array $images): ?string
+    /**
+     * @param  list<array{mime?: string, base64?: string}>  $images
+     * @param  array{json?: bool}  $options
+     */
+    public function visionChatMany(string $systemPrompt, string $userPrompt, array $images, array $options = []): ?string
     {
         $this->setLastError(null);
         $provider = config('llm.provider', 'openai');
@@ -210,20 +214,27 @@ class LlmService
             $content[] = ['type' => 'image_url', 'image_url' => ['url' => $dataUrl]];
         }
 
+        $payload = [
+            'model' => $model,
+            'messages' => [
+                ['role' => 'system', 'content' => $systemPrompt],
+                [
+                    'role' => 'user',
+                    'content' => $content,
+                ],
+            ],
+            'temperature' => 0.2,
+        ];
+
+        // Force a JSON object when callers need structured extraction.
+        if (!empty($options['json'])) {
+            $payload['response_format'] = ['type' => 'json_object'];
+        }
+
         try {
             $response = Http::withToken($apiKey)
                 ->timeout($config['timeout'] ?? 30)
-                ->post("{$baseUrl}/v1/chat/completions", [
-                    'model' => $model,
-                    'messages' => [
-                        ['role' => 'system', 'content' => $systemPrompt],
-                        [
-                            'role' => 'user',
-                            'content' => $content,
-                        ],
-                    ],
-                    'temperature' => 0.2,
-                ]);
+                ->post("{$baseUrl}/v1/chat/completions", $payload);
 
             if (!$response->ok()) {
                 $this->setLastError('LLM HTTP error ' . $response->status() . ': ' . substr($response->body() ?? '', 0, 500));
