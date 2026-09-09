@@ -92,7 +92,7 @@ class BatchChatToolRegistry
             ],
             [
                 'name' => 'get_schedule_status',
-                'description' => 'Get pending/overdue feeding and medication/vaccination schedule counts.',
+                'description' => 'Get this flock\'s schedule health: due/overdue counts AND upcoming planned vaccinations, medications, and feedings (with next_* and upcoming_* lists). Use this for questions like "when is my next vaccination", "what vaccines are coming up", or whether anything is overdue. Do not treat zero due counts as "no schedule".',
                 'parameters' => ['type' => 'object', 'properties' => (object) [], 'additionalProperties' => false],
             ],
             [

@@ -2,9 +2,7 @@
 
 namespace App\Services\BatchChat;
 
-use App\Models\BatchScheduleItem;
 use App\Models\Farm;
-use App\Models\FeedingBatchScheduleItem;
 use App\Models\Flock;
 use App\Models\FlockDailyRecord;
 use App\Models\FlockExpenditure;
@@ -150,22 +148,7 @@ class BatchChatToolExecutor
 
     private function scheduleStatus(Flock $flock): array
     {
-        $today = Carbon::today()->toDateString();
-        $feedingPending = FeedingBatchScheduleItem::query()
-            ->whereHas('batchSchedule', fn ($q) => $q->where('flock_id', $flock->id))
-            ->whereDate('feeding_date', '<=', $today)
-            ->whereIn('status', ['pending', 'missed', 'overdue'])
-            ->count();
-        $medVacPending = BatchScheduleItem::query()
-            ->whereHas('batchSchedule', fn ($q) => $q->where('flock_id', $flock->id))
-            ->whereDate('scheduled_date', '<=', $today)
-            ->whereIn('status', ['pending', 'missed', 'overdue'])
-            ->count();
-
-        return $this->ok('Schedule status', [
-            'feeding_pending_or_overdue' => $feedingPending,
-            'medication_vaccination_pending_or_overdue' => $medVacPending,
-        ], []);
+        return $this->ok('Schedule status', $this->context->scheduleHealth($flock), []);
     }
 
     private function createDaily(Farm $farm, Flock $flock, User $user, array $args): array

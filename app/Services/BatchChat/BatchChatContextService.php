@@ -49,17 +49,7 @@ class BatchChatContextService
             'quantity' => (int) ($a->quantity ?? 0),
         ])->values()->all();
 
-        $feedingPending = FeedingBatchScheduleItem::query()
-            ->whereHas('batchSchedule', fn ($q) => $q->where('flock_id', $flock->id))
-            ->whereDate('feeding_date', '<=', $today)
-            ->whereIn('status', ['pending', 'missed', 'overdue'])
-            ->count();
-
-        $medVacPending = BatchScheduleItem::query()
-            ->whereHas('batchSchedule', fn ($q) => $q->where('flock_id', $flock->id))
-            ->whereDate('scheduled_date', '<=', $today)
-            ->whereIn('status', ['pending', 'missed', 'overdue'])
-            ->count();
+        $scheduleHealth = $this->scheduleHealth($flock);
 
         $farm = Farm::find($farmId);
         $activitySummary = [];
@@ -86,10 +76,7 @@ class BatchChatContextService
             'snapshot' => $snapshot,
             'egg_stock' => $eggStock,
             'allocations' => $allocations,
-            'schedule_health' => [
-                'feeding_pending_or_overdue' => $feedingPending,
-                'medication_vaccination_pending_or_overdue' => $medVacPending,
-            ],
+            'schedule_health' => $scheduleHealth,
             'activity_summary_last_14_days' => $activitySummary,
             'recent_note' => 'The recent.* arrays only cover ~14 days and are row-capped. For any month or custom range, call list_recent_records with date_from and date_to.',
             'recent' => [
@@ -119,6 +106,147 @@ class BatchChatContextService
         ];
     }
 
+    /**
+     * Due/overdue + upcoming schedule facts for Batch AI.
+     *
+     * Batch schedule item statuses are: scheduled | completed | missed | late.
+     * "scheduled" with date <= today means due (or unfinished). Future "scheduled"
+     * dates are upcoming — never treat due-count==0 as "nothing on the schedule".
+     *
+     * @return array<string, mixed>
+     */
+    public function scheduleHealth(Flock $flock, int $upcomingDays = 30): array
+    {
+        $today = Carbon::today();
+        $todayStr = $today->toDateString();
+        $upcomingUntil = $today->copy()->addDays(max(1, $upcomingDays))->toDateString();
+        $openStatuses = ['scheduled', 'missed', 'late'];
+
+        $feedingDue = FeedingBatchScheduleItem::query()
+            ->whereHas('batchSchedule', fn ($q) => $q->where('flock_id', $flock->id))
+            ->whereDate('feeding_date', '<=', $todayStr)
+            ->whereIn('status', $openStatuses)
+            ->count();
+
+        $medVacDueQuery = BatchScheduleItem::query()
+            ->whereHas('batchSchedule', fn ($q) => $q->where('flock_id', $flock->id))
+            ->whereDate('scheduled_date', '<=', $todayStr)
+            ->whereIn('status', $openStatuses);
+
+        $medVacDue = (clone $medVacDueQuery)->count();
+        $medicationDue = (clone $medVacDueQuery)
+            ->whereHas('batchSchedule.schedule', fn ($q) => $q->where('schedule_type', 'medication'))
+            ->count();
+        $vaccinationDue = (clone $medVacDueQuery)
+            ->whereHas('batchSchedule.schedule', fn ($q) => $q->where('schedule_type', 'vaccination'))
+            ->count();
+
+        $upcomingVaccinations = $this->mapUpcomingMedVac($flock, 'vaccination', $todayStr, $upcomingUntil, 10);
+        $upcomingMedications = $this->mapUpcomingMedVac($flock, 'medication', $todayStr, $upcomingUntil, 10);
+        $upcomingFeedings = $this->mapUpcomingFeedings($flock, $todayStr, $upcomingUntil, 5);
+
+        return [
+            'as_of' => $todayStr,
+            'upcoming_through' => $upcomingUntil,
+            // Backward-compatible aliases (now use correct statuses).
+            'feeding_pending_or_overdue' => $feedingDue,
+            'medication_vaccination_pending_or_overdue' => $medVacDue,
+            'feeding_due_or_overdue' => $feedingDue,
+            'medication_due_or_overdue' => $medicationDue,
+            'vaccination_due_or_overdue' => $vaccinationDue,
+            'medication_vaccination_due_or_overdue' => $medVacDue,
+            'next_vaccination' => $upcomingVaccinations[0] ?? null,
+            'next_medication' => $upcomingMedications[0] ?? null,
+            'next_feeding' => $upcomingFeedings[0] ?? null,
+            'upcoming_vaccinations' => $upcomingVaccinations,
+            'upcoming_medications' => $upcomingMedications,
+            'upcoming_feedings' => $upcomingFeedings,
+            'note' => 'due_or_overdue = unfinished items with date on/before today (status scheduled|missed|late). '
+                .'upcoming_* = planned scheduled items from today through upcoming_through. '
+                .'Zero due does NOT mean there is no future vaccination/medication on the plan.',
+        ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function mapUpcomingMedVac(
+        Flock $flock,
+        string $scheduleType,
+        string $fromDate,
+        string $toDate,
+        int $limit
+    ): array {
+        return BatchScheduleItem::query()
+            ->with([
+                'scheduleItem.poultryVaccine',
+                'batchSchedule.schedule',
+            ])
+            ->whereHas('batchSchedule', function ($q) use ($flock, $scheduleType) {
+                $q->where('flock_id', $flock->id)
+                    ->whereHas('schedule', fn ($sq) => $sq->where('schedule_type', $scheduleType));
+            })
+            ->whereDate('scheduled_date', '>=', $fromDate)
+            ->whereDate('scheduled_date', '<=', $toDate)
+            ->whereIn('status', ['scheduled', 'missed', 'late'])
+            ->orderBy('scheduled_date')
+            ->limit($limit)
+            ->get()
+            ->map(function (BatchScheduleItem $item) use ($scheduleType, $fromDate) {
+                $template = $item->scheduleItem;
+                $name = $template?->name
+                    ?: $template?->poultryVaccine?->name
+                    ?: ($scheduleType === 'vaccination' ? 'Vaccination' : 'Medication');
+                $scheduledDate = Carbon::parse($item->scheduled_date)->toDateString();
+                $daysUntil = Carbon::parse($fromDate)->diffInDays(Carbon::parse($scheduledDate), false);
+
+                return [
+                    'id' => $item->id,
+                    'type' => $scheduleType,
+                    'name' => $name,
+                    'status' => $item->status,
+                    'scheduled_date' => $scheduledDate,
+                    'days_until' => (int) $daysUntil,
+                    'age_days' => $template?->age_days,
+                    'dose' => $template?->dose ?? null,
+                    'schedule_name' => $item->batchSchedule?->schedule?->name,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function mapUpcomingFeedings(Flock $flock, string $fromDate, string $toDate, int $limit): array
+    {
+        return FeedingBatchScheduleItem::query()
+            ->with(['batchSchedule.schedule'])
+            ->whereHas('batchSchedule', fn ($q) => $q->where('flock_id', $flock->id))
+            ->whereDate('feeding_date', '>=', $fromDate)
+            ->whereDate('feeding_date', '<=', $toDate)
+            ->whereIn('status', ['scheduled', 'missed', 'late'])
+            ->orderBy('feeding_date')
+            ->limit($limit)
+            ->get()
+            ->map(function (FeedingBatchScheduleItem $item) use ($fromDate) {
+                $feedingDate = Carbon::parse($item->feeding_date)->toDateString();
+                $daysUntil = Carbon::parse($fromDate)->diffInDays(Carbon::parse($feedingDate), false);
+
+                return [
+                    'id' => $item->id,
+                    'type' => 'feeding',
+                    'name' => $item->batchSchedule?->schedule?->title ?? 'Feeding',
+                    'status' => $item->status,
+                    'scheduled_date' => $feedingDate,
+                    'days_until' => (int) $daysUntil,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
     public function systemPrompt(Flock $flock): string
     {
         $name = $flock->name ?: 'this flock';
@@ -133,6 +261,12 @@ class BatchChatContextService
             .'you MUST call list_recent_records with date_from and date_to (YYYY-MM-DD) and a high enough limit. '
             .'Do not claim there were no records on earlier dates unless that tool returns none for that range. '
             .'Prefer the tool summary totals when answering period totals. '
+            .'SCHEDULES: schedule_health distinguishes due/overdue from upcoming planned items. '
+            .'For "when is my next vaccination/medication" or "what is on the schedule", use next_vaccination, '
+            .'next_medication, upcoming_vaccinations, and upcoming_medications (or call get_schedule_status). '
+            .'Never conclude there is no vaccination schedule just because due/overdue counts are zero — '
+            .'future dates with status "scheduled" are still on the plan. '
+            .'list_recent_records(vaccinations/medications) is administered history, not the planned schedule. '
             .'For writes (creating records), call the appropriate tool; the UI will ask the user to Confirm before execution. '
             .'Explain results clearly; when discussing eggs, you may mention crates of 30 eggs. '
             .'Be concise and practical for tropical poultry farms.';
