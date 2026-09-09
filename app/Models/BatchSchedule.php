@@ -11,7 +11,8 @@ class BatchSchedule extends Model
     protected $fillable = [
         'farm_id',
         'flock_id',
-        'schedule_id'
+        'schedule_id',
+        'status',
     ];
 
     public function farm(): BelongsTo
