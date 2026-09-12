@@ -283,6 +283,7 @@ class BatchChatToolExecutor
 
         try {
             $inventory = PoultryFeedInventory::where('farm_id', $farm->id)->findOrFail($inventoryId);
+            $allowMismatch = (bool) ($args['allow_poultry_type_mismatch'] ?? false);
             $usages = FeedUsageInventoryService::deductFifo(
                 $farm->id,
                 (int) $inventory->poultry_feed_type_id,
@@ -290,7 +291,9 @@ class BatchChatToolExecutor
                 $flock->id,
                 $args['usage_date'],
                 $user->id,
-                $inventory->id
+                $inventory->id,
+                null,
+                $allowMismatch
             );
             $usage = $usages[0] ?? null;
             if (!$usage) {

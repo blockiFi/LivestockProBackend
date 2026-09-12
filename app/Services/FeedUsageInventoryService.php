@@ -6,6 +6,7 @@ use App\Models\Flock;
 use App\Models\FlockExpenditure;
 use App\Models\PoultryFeedInventory;
 use App\Models\PoultryFeedInventorySettlement;
+use App\Models\PoultryFeedType;
 use App\Models\PoultryFeedUsage;
 use Illuminate\Support\Facades\DB;
 
@@ -156,11 +157,36 @@ class FeedUsageInventoryService
         string $usageDate,
         ?int $userId = null,
         ?int $preferredInventoryId = null,
-        ?float $overrideUnitCost = null
+        ?float $overrideUnitCost = null,
+        bool $allowPoultryTypeMismatch = false
     ): array {
         $remainingQty = round($totalQuantity, 3);
         if ($remainingQty <= 0) {
             return [];
+        }
+
+        if ($flockId) {
+            $flock = Flock::with('poultryType')->where('farm_id', $farmId)->find($flockId);
+            $feedType = PoultryFeedType::with('poultryType')->find($feedTypeId);
+
+            if ($flock && $feedType && (int) $flock->poultry_type_id !== (int) $feedType->poultry_type_id) {
+                if (!$allowPoultryTypeMismatch) {
+                    $flockType = $flock->poultryType?->name ?? "poultry type ID {$flock->poultry_type_id}";
+                    $feedPoultryType = $feedType->poultryType?->name ?? "poultry type ID {$feedType->poultry_type_id}";
+                    throw new \InvalidArgumentException(
+                        "Feed '{$feedType->name}' is formulated for {$feedPoultryType}, but flock '{$flock->name}' is {$flockType}. Explicit permission is required to use feed of a different poultry type."
+                    );
+                }
+            }
+        }
+
+        if ($preferredInventoryId) {
+            $preferred = PoultryFeedInventory::where('farm_id', $farmId)->find($preferredInventoryId);
+            if ($preferred && (int) $preferred->poultry_feed_type_id !== (int) $feedTypeId) {
+                throw new \InvalidArgumentException(
+                    'Preferred feed inventory batch does not match the requested feed type.'
+                );
+            }
         }
 
         return DB::transaction(function () use (
@@ -543,7 +569,8 @@ class FeedUsageInventoryService
     public static function moveUsageToInventory(
         PoultryFeedUsage $usage,
         PoultryFeedInventory $destination,
-        ?float $moveQuantity = null
+        ?float $moveQuantity = null,
+        bool $allowPoultryTypeMismatch = false
     ): array {
         $source = $usage->feedInventory;
         if (!$source) {
@@ -556,6 +583,20 @@ class FeedUsageInventoryService
 
         if ((int) $destination->farm_id !== (int) $usage->farm_id) {
             throw new \RuntimeException('Destination feed inventory not found in this farm.');
+        }
+
+        if ($usage->flock_id) {
+            $flock = $usage->flock ?? Flock::with('poultryType')->find($usage->flock_id);
+            $destFeedType = $destination->feedType ?? PoultryFeedType::with('poultryType')->find($destination->poultry_feed_type_id);
+            if ($flock && $destFeedType && (int) $flock->poultry_type_id !== (int) $destFeedType->poultry_type_id) {
+                if (!$allowPoultryTypeMismatch) {
+                    $flockType = $flock->poultryType?->name ?? "poultry type ID {$flock->poultry_type_id}";
+                    $destPoultryType = $destFeedType->poultryType?->name ?? "poultry type ID {$destFeedType->poultry_type_id}";
+                    throw new \InvalidArgumentException(
+                        "Destination feed '{$destFeedType->name}' is formulated for {$destPoultryType}, but flock '{$flock->name}' is {$flockType}. Explicit permission is required to use feed of a different poultry type."
+                    );
+                }
+            }
         }
 
         if (strtolower((string) $destination->status) === 'closed') {

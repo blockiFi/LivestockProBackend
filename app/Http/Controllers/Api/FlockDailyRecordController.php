@@ -119,6 +119,24 @@ class FlockDailyRecordController extends ApiController
             ]);
         }
 
+        if ($normalized['feed_inventory_id'] && $normalized['feed_kg'] > 0) {
+            $inventory = PoultryFeedInventory::with('feedType.poultryType')
+                ->where('farm_id', $farmId)
+                ->find($normalized['feed_inventory_id']);
+            if ($inventory && $inventory->feedType) {
+                if ((int) $inventory->feedType->poultry_type_id !== (int) $flock->poultry_type_id && !$normalized['allow_poultry_type_mismatch']) {
+                    $feedName = $inventory->feedType->name;
+                    $feedTypeName = $inventory->feedType->poultryType?->name ?? "poultry type ID {$inventory->feedType->poultry_type_id}";
+                    $flockTypeName = $flock->poultryType?->name ?? "poultry type ID {$flock->poultry_type_id}";
+                    return $this->sendValidationError('Poultry type mismatch', [
+                        'poultry_feed_inventory_id' => [
+                            "Feed '{$feedName}' is formulated for {$feedTypeName}, but this flock is {$flockTypeName}. Permission is required to use feed of a different poultry type."
+                        ],
+                    ]);
+                }
+            }
+        }
+
         try {
             DB::beginTransaction();
 
@@ -134,7 +152,8 @@ class FlockDailyRecordController extends ApiController
                 $normalized['feed_kg'],
                 $record,
                 $flock,
-                $normalized['feed_inventory_id']
+                $normalized['feed_inventory_id'],
+                $normalized['allow_poultry_type_mismatch']
             );
 
             $this->syncMortalityRecords($farmId, $flock, $normalized['date'], $normalized['mortality']);
@@ -147,7 +166,8 @@ class FlockDailyRecordController extends ApiController
                     $flock,
                     $normalized['date'],
                     $normalized['feed_kg'],
-                    $normalized['feed_inventory_id']
+                    $normalized['feed_inventory_id'],
+                    $normalized['allow_poultry_type_mismatch']
                 );
             }
 
@@ -248,6 +268,24 @@ class FlockDailyRecordController extends ApiController
                 : (string) $record->date;
         }
 
+        if ($normalized['feed_inventory_id'] && $normalized['feed_kg'] > 0) {
+            $inventory = PoultryFeedInventory::with('feedType.poultryType')
+                ->where('farm_id', $farmId)
+                ->find($normalized['feed_inventory_id']);
+            if ($inventory && $inventory->feedType) {
+                if ((int) $inventory->feedType->poultry_type_id !== (int) $flock->poultry_type_id && !$normalized['allow_poultry_type_mismatch']) {
+                    $feedName = $inventory->feedType->name;
+                    $feedTypeName = $inventory->feedType->poultryType?->name ?? "poultry type ID {$inventory->feedType->poultry_type_id}";
+                    $flockTypeName = $flock->poultryType?->name ?? "poultry type ID {$flock->poultry_type_id}";
+                    return $this->sendValidationError('Poultry type mismatch', [
+                        'poultry_feed_inventory_id' => [
+                            "Feed '{$feedName}' is formulated for {$feedTypeName}, but this flock is {$flockTypeName}. Permission is required to use feed of a different poultry type."
+                        ],
+                    ]);
+                }
+            }
+        }
+
         try {
             DB::beginTransaction();
 
@@ -263,7 +301,8 @@ class FlockDailyRecordController extends ApiController
                 $normalized['feed_kg'],
                 $record,
                 $flock,
-                $normalized['feed_inventory_id']
+                $normalized['feed_inventory_id'],
+                $normalized['allow_poultry_type_mismatch']
             );
 
             $this->syncMortalityRecords($farmId, $flock, $normalized['date'], $normalized['mortality']);
@@ -276,7 +315,8 @@ class FlockDailyRecordController extends ApiController
                     $flock,
                     $normalized['date'],
                     $normalized['feed_kg'],
-                    $normalized['feed_inventory_id']
+                    $normalized['feed_inventory_id'],
+                    $normalized['allow_poultry_type_mismatch']
                 );
             }
 
@@ -457,6 +497,7 @@ class FlockDailyRecordController extends ApiController
 
         $humidity = $request->input('humidity_percentage', $request->input('humidity'));
         $feedInventoryId = $request->input('poultry_feed_inventory_id');
+        $allowMismatch = $request->boolean('allow_poultry_type_mismatch');
 
         return [
             'date' => $request->date,
@@ -480,6 +521,7 @@ class FlockDailyRecordController extends ApiController
             'feed_inventory_id' => $feedInventoryId !== null && $feedInventoryId !== ''
                 ? (int) $feedInventoryId
                 : null,
+            'allow_poultry_type_mismatch' => $allowMismatch,
         ];
     }
 
@@ -664,7 +706,8 @@ class FlockDailyRecordController extends ApiController
         Flock $flock,
         string $date,
         float $feedKg,
-        ?int $preferredInventoryId = null
+        ?int $preferredInventoryId = null,
+        bool $allowPoultryTypeMismatch = false
     ): bool {
         if ($feedKg <= 0) {
             return false;
@@ -681,9 +724,17 @@ class FlockDailyRecordController extends ApiController
 
         $feedTypeId = null;
         if ($preferredInventoryId) {
-            $feedTypeId = PoultryFeedInventory::where('farm_id', $farmId)
+            $preferred = PoultryFeedInventory::with('feedType')
+                ->where('farm_id', $farmId)
                 ->where('id', $preferredInventoryId)
-                ->value('poultry_feed_type_id');
+                ->first();
+            if ($preferred) {
+                $matchesPoultryType = $preferred->feedType
+                    && (int) $preferred->feedType->poultry_type_id === (int) $flock->poultry_type_id;
+                if ($matchesPoultryType || $allowPoultryTypeMismatch) {
+                    $feedTypeId = $preferred->poultry_feed_type_id;
+                }
+            }
         }
 
         if (!$feedTypeId) {
@@ -713,7 +764,7 @@ class FlockDailyRecordController extends ApiController
                 ->value('id');
         }
 
-        if (!$feedTypeId) {
+        if (!$feedTypeId && $allowPoultryTypeMismatch) {
             $feedTypeId = \App\Models\PoultryFeedType::where('farm_id', $farmId)
                 ->orderBy('id')
                 ->value('id');
@@ -730,7 +781,9 @@ class FlockDailyRecordController extends ApiController
             $flock->id,
             $date,
             auth()->id(),
-            $preferredInventoryId
+            $preferredInventoryId,
+            null,
+            $allowPoultryTypeMismatch
         );
 
         return !empty($usages);
@@ -744,7 +797,8 @@ class FlockDailyRecordController extends ApiController
         Flock $flock,
         string $date,
         float $feedKg,
-        ?int $preferredInventoryId = null
+        ?int $preferredInventoryId = null,
+        bool $allowPoultryTypeMismatch = false
     ): void {
         if ($feedKg <= 0) {
             return;
@@ -760,7 +814,7 @@ class FlockDailyRecordController extends ApiController
             return;
         }
 
-        $this->syncStandaloneFeedUsage($farmId, $flock, $date, $feedKg, $preferredInventoryId);
+        $this->syncStandaloneFeedUsage($farmId, $flock, $date, $feedKg, $preferredInventoryId, $allowPoultryTypeMismatch);
     }
 
     /**
@@ -785,7 +839,8 @@ class FlockDailyRecordController extends ApiController
         $feedConsumptionKg,
         $record,
         $flock,
-        ?int $preferredInventoryId = null
+        ?int $preferredInventoryId = null,
+        bool $allowPoultryTypeMismatch = false
     ): bool {
         $feedingBatchSchedule = FeedingBatchSchedule::where('flock_id', $flockId)
             ->with(['schedule.items'])
@@ -880,7 +935,9 @@ class FlockDailyRecordController extends ApiController
             $flock->id,
             $date,
             auth()->id(),
-            $preferredInventoryId
+            $preferredInventoryId,
+            null,
+            $allowPoultryTypeMismatch
         );
 
         return !empty($usages);

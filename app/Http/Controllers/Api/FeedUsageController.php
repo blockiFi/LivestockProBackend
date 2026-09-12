@@ -10,6 +10,7 @@ use App\Models\Flock;
 use App\Models\PoultryFeedUsage;
 use App\Models\FlockExpenditure;
 use App\Models\PoultryFeedInventory;
+use App\Models\PoultryFeedType;
 use App\Services\FeedingDayService;
 use App\Services\FeedingScheduleRangeService;
 use App\Services\FeedUsageInventoryService;
@@ -91,6 +92,7 @@ class FeedUsageController extends ApiController
             'quantity' => 'required|numeric|min:0',
             'unit_cost' => 'nullable|numeric|min:0',
             'usage_date' => 'required|date',
+            'allow_poultry_type_mismatch' => 'sometimes|boolean',
         ]);
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
@@ -101,8 +103,42 @@ class FeedUsageController extends ApiController
             return $inactiveResponse;
         }
 
+        $allowMismatch = $request->boolean('allow_poultry_type_mismatch');
+        $feedType = PoultryFeedType::with('poultryType')->find($request->poultry_feed_type_id);
+        if ($feedType && (int) $flock->poultry_type_id !== (int) $feedType->poultry_type_id && !$allowMismatch) {
+            $flockTypeName = $flock->poultryType?->name ?? "poultry type ID {$flock->poultry_type_id}";
+            $feedTypeName = $feedType->poultryType?->name ?? "poultry type ID {$feedType->poultry_type_id}";
+            return $this->sendValidationError('Poultry type mismatch', [
+                'poultry_feed_type_id' => [
+                    "Feed '{$feedType->name}' is formulated for {$feedTypeName}, but flock '{$flock->name}' is {$flockTypeName}. Permission is required to use feed of a different poultry type."
+                ],
+            ]);
+        }
+
+        if ($request->filled('poultry_feed_inventory_id')) {
+            $preferredInv = PoultryFeedInventory::with('feedType.poultryType')
+                ->where('farm_id', $farm->id)
+                ->find($request->poultry_feed_inventory_id);
+            if ($preferredInv) {
+                if ((int) $preferredInv->poultry_feed_type_id !== (int) $request->poultry_feed_type_id) {
+                    return $this->sendValidationError('Validation failed', [
+                        'poultry_feed_inventory_id' => ['Selected feed inventory batch does not match the chosen feed type.'],
+                    ]);
+                }
+                if ($preferredInv->feedType && (int) $flock->poultry_type_id !== (int) $preferredInv->feedType->poultry_type_id && !$allowMismatch) {
+                    $flockTypeName = $flock->poultryType?->name ?? "poultry type ID {$flock->poultry_type_id}";
+                    $invPoultryType = $preferredInv->feedType->poultryType?->name ?? "poultry type ID {$preferredInv->feedType->poultry_type_id}";
+                    return $this->sendValidationError('Poultry type mismatch', [
+                        'poultry_feed_inventory_id' => [
+                            "Feed inventory batch is formulated for {$invPoultryType}, but flock '{$flock->name}' is {$flockTypeName}. Permission is required to use feed of a different poultry type."
+                        ],
+                    ]);
+                }
+            }
+        }
+
         try {
-            $usages = DB::transaction(function () use ($request, $farm, $user) {
+            $usages = DB::transaction(function () use ($request, $farm, $user, $allowMismatch) {
                 $overrideUnitCost = ($request->filled('unit_cost') && (float) $request->unit_cost > 0)
                     ? (float) $request->unit_cost
                     : null;
@@ -119,7 +155,8 @@ class FeedUsageController extends ApiController
                     (string) $request->usage_date,
                     auth()->id() ?? $user->id,
                     $preferredInventoryId,
-                    $overrideUnitCost
+                    $overrideUnitCost,
+                    $allowMismatch
                 );
 
                 $this->syncBatchScheduleItem(
@@ -147,6 +184,10 @@ class FeedUsageController extends ApiController
             }
 
             return $this->sendResponse($primaryUsage, 'Feed usage created successfully', 201);
+        } catch (\InvalidArgumentException $e) {
+            return $this->sendValidationError('Validation failed', [
+                'poultry_feed_type_id' => [$e->getMessage()],
+            ]);
         } catch (\RuntimeException $e) {
             return $this->sendError($e->getMessage(), [], 400);
         }
@@ -189,15 +230,33 @@ class FeedUsageController extends ApiController
             'quantity' => 'sometimes|numeric|min:0',
             'unit_cost' => 'sometimes|numeric|min:0',
             'usage_date' => 'sometimes|date',
+            'allow_poultry_type_mismatch' => 'sometimes|boolean',
         ]);
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
 
+        $allowMismatch = $request->boolean('allow_poultry_type_mismatch');
+        $targetFlockId = $request->has('flock_id') ? (int) $request->flock_id : (int) $usage->flock_id;
+        $targetFeedTypeId = $request->has('poultry_feed_type_id') ? (int) $request->poultry_feed_type_id : (int) $usage->poultry_feed_type_id;
+
+        $targetFlock = Flock::with('poultryType')->where('farm_id', $farm->id)->find($targetFlockId);
+        $targetFeedType = PoultryFeedType::with('poultryType')->find($targetFeedTypeId);
+
+        if ($targetFlock && $targetFeedType && (int) $targetFlock->poultry_type_id !== (int) $targetFeedType->poultry_type_id && !$allowMismatch) {
+            $flockTypeName = $targetFlock->poultryType?->name ?? "poultry type ID {$targetFlock->poultry_type_id}";
+            $feedTypeName = $targetFeedType->poultryType?->name ?? "poultry type ID {$targetFeedType->poultry_type_id}";
+            return $this->sendValidationError('Poultry type mismatch', [
+                'poultry_feed_type_id' => [
+                    "Feed '{$targetFeedType->name}' is formulated for {$feedTypeName}, but flock '{$targetFlock->name}' is {$flockTypeName}. Permission is required to use feed of a different poultry type."
+                ],
+            ]);
+        }
+
         try {
             $splitUsage = null;
 
-            $usage = DB::transaction(function () use ($request, $usage, $farm, &$splitUsage) {
+            $usage = DB::transaction(function () use ($request, $usage, $farm, &$splitUsage, $allowMismatch) {
                 $newQuantity = $request->has('quantity') ? (float) $request->quantity : (float) $usage->quantity;
                 $newInventoryId = $request->has('poultry_feed_inventory_id')
                     ? (int) $request->poultry_feed_inventory_id
@@ -224,7 +283,8 @@ class FeedUsageController extends ApiController
                     $moveResult = FeedUsageInventoryService::moveUsageToInventory(
                         $usage,
                         $newInventory,
-                        $moveQuantity
+                        $moveQuantity,
+                        $allowMismatch
                     );
 
                     $usage = $moveResult['usage'];
@@ -299,6 +359,10 @@ class FeedUsageController extends ApiController
             }
 
             return $this->sendResponse($usage, 'Feed usage updated successfully');
+        } catch (\InvalidArgumentException $e) {
+            return $this->sendValidationError('Validation failed', [
+                'poultry_feed_type_id' => [$e->getMessage()],
+            ]);
         } catch (\RuntimeException $e) {
             return $this->sendError($e->getMessage(), [], 400);
         }

@@ -61,7 +61,13 @@ class FlockDailyRecordAutoCreateTest extends TestCase
         $ownerRole->givePermissionTo($manageFlocks);
 
         $this->farm->users()->attach($this->user->id);
-        $this->user->assignRole($ownerRole);
+        app(\Spatie\Permission\PermissionRegistrar::class)->setPermissionsTeamId($this->farm->id);
+        $this->user->roles()->attach($ownerRole->id, [
+            'model_type' => User::class,
+            'farm_id' => $this->farm->id,
+        ]);
+        $this->user->unsetRelation('roles');
+        $this->user->unsetRelation('permissions');
 
         $poultryType = PoultryType::factory()->create(['name' => 'Layer']);
         $flockStage = FlockStage::factory()->create(['poultry_type_id' => $poultryType->id]);

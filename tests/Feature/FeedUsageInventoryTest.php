@@ -830,4 +830,196 @@ class FeedUsageInventoryTest extends TestCase
             'quantity' => 10,
         ]);
     }
+
+    public function test_feed_usage_rejects_cross_poultry_type_feed_without_permission(): void
+    {
+        $layerType = PoultryType::factory()->create(['name' => 'Layer']);
+        $layerFeedType = PoultryFeedType::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'user',
+            'poultry_type_id' => $layerType->id,
+            'name' => 'Layer Mash',
+            'description' => 'For layers only',
+        ]);
+
+        $layerBatch = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $layerFeedType->id,
+            'quantity' => 50,
+            'unit_cost' => 4.0,
+            'status' => 'available',
+            'batch_number' => 'LAYER-BATCH-1',
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-usages", [
+                'poultry_feed_type_id' => $layerFeedType->id,
+                'flock_id' => $this->flock->id,
+                'quantity' => 20,
+                'usage_date' => now()->toDateString(),
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['poultry_feed_type_id']);
+
+        // Assert no inventory was deducted
+        $this->assertEquals(50.0, (float) $layerBatch->fresh()->quantity);
+        $this->assertDatabaseMissing('poultry_feed_usages', [
+            'poultry_feed_type_id' => $layerFeedType->id,
+            'flock_id' => $this->flock->id,
+        ]);
+    }
+
+    public function test_feed_usage_permits_cross_poultry_type_feed_when_explicitly_permitted(): void
+    {
+        $layerType = PoultryType::factory()->create(['name' => 'Layer']);
+        $layerFeedType = PoultryFeedType::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'user',
+            'poultry_type_id' => $layerType->id,
+            'name' => 'Layer Mash',
+            'description' => 'For layers only',
+        ]);
+
+        $layerBatch = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $layerFeedType->id,
+            'quantity' => 50,
+            'unit_cost' => 4.0,
+            'status' => 'available',
+            'batch_number' => 'LAYER-BATCH-2',
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-usages", [
+                'poultry_feed_type_id' => $layerFeedType->id,
+                'flock_id' => $this->flock->id,
+                'quantity' => 20,
+                'usage_date' => now()->toDateString(),
+                'allow_poultry_type_mismatch' => true,
+            ]);
+
+        $response->assertStatus(201);
+
+        $this->assertEquals(30.0, (float) $layerBatch->fresh()->quantity);
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_type_id' => $layerFeedType->id,
+            'flock_id' => $this->flock->id,
+            'quantity' => 20,
+        ]);
+    }
+
+    public function test_daily_record_rejects_cross_poultry_type_inventory_without_permission(): void
+    {
+        $layerType = PoultryType::factory()->create(['name' => 'Layer']);
+        $layerFeedType = PoultryFeedType::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'user',
+            'poultry_type_id' => $layerType->id,
+            'name' => 'Layer Mash',
+            'description' => 'For layers only',
+        ]);
+
+        $layerBatch = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $layerFeedType->id,
+            'quantity' => 50,
+            'unit_cost' => 4.0,
+            'status' => 'available',
+            'batch_number' => 'LAYER-DAILY-1',
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/flock-daily-records", [
+                'flock_id' => $this->flock->id,
+                'date' => now()->toDateString(),
+                'feed_consumed_kg' => 15,
+                'poultry_feed_inventory_id' => $layerBatch->id,
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['poultry_feed_inventory_id']);
+
+        $this->assertEquals(50.0, (float) $layerBatch->fresh()->quantity);
+        $this->assertDatabaseMissing('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $layerBatch->id,
+            'flock_id' => $this->flock->id,
+        ]);
+    }
+
+    public function test_daily_record_permits_cross_poultry_type_inventory_when_explicitly_permitted(): void
+    {
+        $layerType = PoultryType::factory()->create(['name' => 'Layer']);
+        $layerFeedType = PoultryFeedType::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'user',
+            'poultry_type_id' => $layerType->id,
+            'name' => 'Layer Mash',
+            'description' => 'For layers only',
+        ]);
+
+        $layerBatch = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $layerFeedType->id,
+            'quantity' => 50,
+            'unit_cost' => 4.0,
+            'status' => 'available',
+            'batch_number' => 'LAYER-DAILY-2',
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/flock-daily-records", [
+                'flock_id' => $this->flock->id,
+                'date' => now()->toDateString(),
+                'feed_consumed_kg' => 15,
+                'poultry_feed_inventory_id' => $layerBatch->id,
+                'allow_poultry_type_mismatch' => true,
+            ]);
+
+        $response->assertStatus(201);
+
+        $this->assertEquals(35.0, (float) $layerBatch->fresh()->quantity);
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $layerBatch->id,
+            'flock_id' => $this->flock->id,
+            'quantity' => 15,
+        ]);
+    }
+
+    public function test_deduct_fifo_service_enforces_poultry_type_matching(): void
+    {
+        $layerType = PoultryType::factory()->create(['name' => 'Layer']);
+        $layerFeedType = PoultryFeedType::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'user',
+            'poultry_type_id' => $layerType->id,
+            'name' => 'Layer Pellets',
+            'description' => 'Layer only',
+        ]);
+
+        PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $layerFeedType->id,
+            'quantity' => 50,
+            'unit_cost' => 3.5,
+            'status' => 'available',
+            'batch_number' => 'SERVICE-TEST-1',
+        ]);
+
+        // Attempting deduction without mismatch permission throws InvalidArgumentException
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("Explicit permission is required to use feed of a different poultry type.");
+
+        \App\Services\FeedUsageInventoryService::deductFifo(
+            $this->farm->id,
+            $layerFeedType->id,
+            10,
+            $this->flock->id,
+            now()->toDateString(),
+            $this->user->id,
+            null,
+            null,
+            false // allowPoultryTypeMismatch = false
+        );
+    }
 }
