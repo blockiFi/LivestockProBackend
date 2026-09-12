@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Country;
 use App\Models\Farm;
 use App\Models\Flock;
+use App\Models\FlockExpenditure;
 use App\Models\FlockStage;
 use App\Models\Permission;
 use App\Models\PoultryFeedInventory;
@@ -572,5 +573,261 @@ class FeedUsageInventoryTest extends TestCase
                 'quantity' => 1000,
             ])
             ->assertStatus(422);
+    }
+
+    public function test_fifo_feed_deduction_across_two_inventories(): void
+    {
+        $this->inventory->delete();
+
+        $feedType = PoultryFeedType::where('farm_id', $this->farm->id)->first();
+
+        $batch1 = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $feedType->id,
+            'quantity' => 30,
+            'unit_cost' => 2.5,
+            'status' => 'available',
+            'batch_number' => 'BATCH-FIFO-1',
+            'created_at' => now()->subHours(2),
+        ]);
+
+        $batch2 = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $feedType->id,
+            'quantity' => 50,
+            'unit_cost' => 3.0,
+            'status' => 'available',
+            'batch_number' => 'BATCH-FIFO-2',
+            'created_at' => now()->subHour(),
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-usages", [
+                'poultry_feed_type_id' => $feedType->id,
+                'flock_id' => $this->flock->id,
+                'quantity' => 40,
+                'usage_date' => now()->toDateString(),
+            ]);
+
+        $response->assertStatus(201);
+
+        $this->assertEquals(0.0, (float) $batch1->fresh()->quantity);
+        $this->assertEquals('closed', $batch1->fresh()->status);
+
+        $this->assertEquals(40.0, (float) $batch2->fresh()->quantity);
+        $this->assertEquals('available', $batch2->fresh()->status);
+
+        // Assert neither batch is negative
+        $this->assertGreaterThanOrEqual(0, (float) $batch1->fresh()->quantity);
+        $this->assertGreaterThanOrEqual(0, (float) $batch2->fresh()->quantity);
+
+        // Assert two usage records were created
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $batch1->id,
+            'quantity' => 30,
+            'flock_id' => $this->flock->id,
+            'unit_cost' => 2.5,
+        ]);
+
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $batch2->id,
+            'quantity' => 10,
+            'flock_id' => $this->flock->id,
+            'unit_cost' => 3.0,
+        ]);
+
+        // Assert expenditures recorded accurately per batch cost
+        $this->assertDatabaseHas('flock_expenditures', [
+            'flock_id' => $this->flock->id,
+            'amount' => 75.00, // 30 * 2.5
+        ]);
+
+        $this->assertDatabaseHas('flock_expenditures', [
+            'flock_id' => $this->flock->id,
+            'amount' => 30.00, // 10 * 3.0
+        ]);
+    }
+
+    public function test_fifo_feed_deduction_single_inventory_sufficient_stock(): void
+    {
+        $this->inventory->update(['quantity' => 100]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-usages", [
+                'poultry_feed_type_id' => $this->inventory->poultry_feed_type_id,
+                'flock_id' => $this->flock->id,
+                'quantity' => 40,
+                'usage_date' => now()->toDateString(),
+            ]);
+
+        $response->assertStatus(201);
+        $this->assertEquals(60.0, (float) $this->inventory->fresh()->quantity);
+        $this->assertEquals('available', $this->inventory->fresh()->status);
+
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $this->inventory->id,
+            'quantity' => 40,
+        ]);
+    }
+
+    public function test_fifo_feed_deduction_cascades_and_absorbs_overdraft_on_last_batch(): void
+    {
+        $this->inventory->delete();
+
+        $feedType = PoultryFeedType::where('farm_id', $this->farm->id)->first();
+
+        $batch1 = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $feedType->id,
+            'quantity' => 30,
+            'unit_cost' => 2.5,
+            'status' => 'available',
+            'batch_number' => 'BATCH-DEFICIT-1',
+            'created_at' => now()->subHours(2),
+        ]);
+
+        $batch2 = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $feedType->id,
+            'quantity' => 10,
+            'unit_cost' => 3.0,
+            'status' => 'available',
+            'batch_number' => 'BATCH-DEFICIT-2',
+            'created_at' => now()->subHour(),
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-usages", [
+                'poultry_feed_type_id' => $feedType->id,
+                'flock_id' => $this->flock->id,
+                'quantity' => 45,
+                'usage_date' => now()->toDateString(),
+            ]);
+
+        $response->assertStatus(201);
+
+        $this->assertEquals(0.0, (float) $batch1->fresh()->quantity);
+        $this->assertEquals('closed', $batch1->fresh()->status);
+
+        $this->assertEquals(-5.0, (float) $batch2->fresh()->quantity);
+        $this->assertEquals('depleted', $batch2->fresh()->status);
+
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $batch1->id,
+            'quantity' => 30,
+        ]);
+
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $batch2->id,
+            'quantity' => 15,
+        ]);
+    }
+
+    public function test_fifo_feed_deduction_honors_preferred_inventory_first(): void
+    {
+        $this->inventory->delete();
+
+        $feedType = PoultryFeedType::where('farm_id', $this->farm->id)->first();
+
+        $batch1 = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $feedType->id,
+            'quantity' => 30,
+            'unit_cost' => 2.5,
+            'status' => 'available',
+            'batch_number' => 'BATCH-PREF-1',
+            'created_at' => now()->subHours(2),
+        ]);
+
+        $batch2 = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $feedType->id,
+            'quantity' => 50,
+            'unit_cost' => 3.0,
+            'status' => 'available',
+            'batch_number' => 'BATCH-PREF-2',
+            'created_at' => now()->subHour(),
+        ]);
+
+        // Explicitly prefer batch2 (newer batch)
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/feed-usages", [
+                'poultry_feed_inventory_id' => $batch2->id,
+                'poultry_feed_type_id' => $feedType->id,
+                'flock_id' => $this->flock->id,
+                'quantity' => 60,
+                'usage_date' => now()->toDateString(),
+            ]);
+
+        $response->assertStatus(201);
+
+        // Preferred batch 2 had 50kg, all deducted -> 0kg closed
+        $this->assertEquals(0.0, (float) $batch2->fresh()->quantity);
+        $this->assertEquals('closed', $batch2->fresh()->status);
+
+        // Remainder (10kg) deducted from batch 1 -> 20kg remaining
+        $this->assertEquals(20.0, (float) $batch1->fresh()->quantity);
+
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $batch2->id,
+            'quantity' => 50,
+        ]);
+
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $batch1->id,
+            'quantity' => 10,
+        ]);
+    }
+
+    public function test_daily_record_feed_usage_uses_fifo_deduction(): void
+    {
+        $this->inventory->delete();
+
+        $feedType = PoultryFeedType::where('farm_id', $this->farm->id)->first();
+
+        $batch1 = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $feedType->id,
+            'quantity' => 30,
+            'unit_cost' => 2.5,
+            'status' => 'available',
+            'batch_number' => 'BATCH-DAILY-1',
+            'created_at' => now()->subHours(2),
+        ]);
+
+        $batch2 = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $feedType->id,
+            'quantity' => 50,
+            'unit_cost' => 3.0,
+            'status' => 'available',
+            'batch_number' => 'BATCH-DAILY-2',
+            'created_at' => now()->subHour(),
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/flock-daily-records", [
+                'flock_id' => $this->flock->id,
+                'date' => now()->toDateString(),
+                'feed_consumed_kg' => 40,
+            ]);
+
+        $response->assertStatus(201);
+
+        $this->assertEquals(0.0, (float) $batch1->fresh()->quantity);
+        $this->assertEquals('closed', $batch1->fresh()->status);
+
+        $this->assertEquals(40.0, (float) $batch2->fresh()->quantity);
+        $this->assertEquals('available', $batch2->fresh()->status);
+
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $batch1->id,
+            'quantity' => 30,
+        ]);
+
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'poultry_feed_inventory_id' => $batch2->id,
+            'quantity' => 10,
+        ]);
     }
 }

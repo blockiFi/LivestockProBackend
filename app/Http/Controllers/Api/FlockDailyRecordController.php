@@ -679,81 +679,61 @@ class FlockDailyRecordController extends ApiController
             return false;
         }
 
-        $inventory = null;
+        $feedTypeId = null;
         if ($preferredInventoryId) {
-            $inventory = PoultryFeedInventory::where('farm_id', $farmId)
+            $feedTypeId = PoultryFeedInventory::where('farm_id', $farmId)
                 ->where('id', $preferredInventoryId)
-                ->first();
+                ->value('poultry_feed_type_id');
         }
 
-        if (!$inventory) {
-            $inventory = PoultryFeedInventory::where('farm_id', $farmId)
+        if (!$feedTypeId) {
+            $feedTypeId = PoultryFeedInventory::where('farm_id', $farmId)
                 ->where('quantity', '>', 0)
                 ->whereIn('status', ['available', 'in_use'])
                 ->whereHas('feedType', function ($query) use ($flock) {
                     $query->where('poultry_type_id', $flock->poultry_type_id);
                 })
                 ->orderBy('created_at', 'asc')
-                ->first();
+                ->value('poultry_feed_type_id');
         }
 
-        if (!$inventory) {
-            $inventory = PoultryFeedInventory::where('farm_id', $farmId)
+        if (!$feedTypeId) {
+            $feedTypeId = PoultryFeedInventory::where('farm_id', $farmId)
                 ->whereIn('status', ['available', 'in_use', 'depleted'])
                 ->whereHas('feedType', function ($query) use ($flock) {
                     $query->where('poultry_type_id', $flock->poultry_type_id);
                 })
                 ->orderBy('created_at', 'asc')
-                ->first();
+                ->value('poultry_feed_type_id');
         }
 
-        if (!$inventory) {
-            $inventory = PoultryFeedInventory::where('farm_id', $farmId)
-                ->whereIn('status', ['available', 'in_use', 'depleted'])
-                ->orderBy('created_at', 'asc')
-                ->first();
-        }
-
-        if (!$inventory) {
+        if (!$feedTypeId) {
             $feedTypeId = \App\Models\PoultryFeedType::where('poultry_type_id', $flock->poultry_type_id)
                 ->orderBy('id')
                 ->value('id');
-
-            if (!$feedTypeId) {
-                $feedTypeId = \App\Models\PoultryFeedType::where('farm_id', $farmId)
-                    ->orderBy('id')
-                    ->value('id');
-            }
-
-            if (!$feedTypeId) {
-                return false;
-            }
-
-            $inventory = FeedUsageInventoryService::resolveOrCreateInventory(
-                $farmId,
-                (int) $feedTypeId,
-                auth()->id(),
-                $preferredInventoryId
-            );
         }
 
-        $deductAmount = $feedKg;
-        FeedUsageInventoryService::deductFromInventory($inventory, $deductAmount);
+        if (!$feedTypeId) {
+            $feedTypeId = \App\Models\PoultryFeedType::where('farm_id', $farmId)
+                ->orderBy('id')
+                ->value('id');
+        }
 
-        $usage = PoultryFeedUsage::create([
-            'farm_id' => $farmId,
-            'poultry_feed_inventory_id' => $inventory->id,
-            'poultry_feed_type_id' => $inventory->poultry_feed_type_id,
-            'flock_id' => $flock->id,
-            'quantity' => $deductAmount,
-            'unit_cost' => $inventory->unit_cost ?? 0,
-            'usage_date' => $date,
-            'created_by' => auth()->id(),
-        ]);
+        if (!$feedTypeId) {
+            return false;
+        }
 
-        FlockExpenditure::recordFromFeedUsage($usage);
+        $usages = FeedUsageInventoryService::deductFifo(
+            $farmId,
+            (int) $feedTypeId,
+            $feedKg,
+            $flock->id,
+            $date,
+            auth()->id(),
+            $preferredInventoryId
+        );
 
-        return true;
+        return !empty($usages);
     }
 
     /**
@@ -893,59 +873,17 @@ class FlockDailyRecordController extends ApiController
             return true;
         }
 
-        $inventory = null;
-        if ($preferredInventoryId) {
-            $inventory = PoultryFeedInventory::where('farm_id', $farmId)
-                ->where('id', $preferredInventoryId)
-                ->where('poultry_feed_type_id', $feedTypeId)
-                ->first();
-        }
+        $usages = FeedUsageInventoryService::deductFifo(
+            $farmId,
+            (int) $feedTypeId,
+            $feedKg,
+            $flock->id,
+            $date,
+            auth()->id(),
+            $preferredInventoryId
+        );
 
-        if (!$inventory) {
-            $inventory = PoultryFeedInventory::where('farm_id', $farmId)
-                ->where('poultry_feed_type_id', $feedTypeId)
-                ->where('quantity', '>', 0)
-                ->whereIn('status', ['available', 'in_use'])
-                ->orderBy('created_at', 'asc')
-                ->first();
-        }
-
-        if (!$inventory) {
-            $inventory = PoultryFeedInventory::where('farm_id', $farmId)
-                ->where('poultry_feed_type_id', $feedTypeId)
-                ->whereIn('status', ['available', 'in_use', 'depleted'])
-                ->orderBy('created_at', 'asc')
-                ->first();
-        }
-
-        if (!$inventory) {
-            $inventory = PoultryFeedInventory::where('farm_id', $farmId)
-                ->whereIn('status', ['available', 'in_use', 'depleted'])
-                ->orderBy('created_at', 'asc')
-                ->first();
-        }
-
-        if (!$inventory) {
-            return false;
-        }
-
-        $deductAmount = $feedKg;
-        FeedUsageInventoryService::deductFromInventory($inventory, $deductAmount);
-
-        $usage = PoultryFeedUsage::create([
-            'farm_id' => $farmId,
-            'poultry_feed_inventory_id' => $inventory->id,
-            'poultry_feed_type_id' => $feedTypeId,
-            'flock_id' => $flock->id,
-            'quantity' => $deductAmount,
-            'unit_cost' => $inventory->unit_cost ?? 0,
-            'usage_date' => $date,
-            'created_by' => auth()->id(),
-        ]);
-
-        FlockExpenditure::recordFromFeedUsage($usage);
-
-        return true;
+        return !empty($usages);
     }
 
     /**

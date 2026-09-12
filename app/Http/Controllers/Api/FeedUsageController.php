@@ -102,32 +102,25 @@ class FeedUsageController extends ApiController
         }
 
         try {
-            $usage = DB::transaction(function () use ($request, $farm, $user) {
-                $feedInventory = FeedUsageInventoryService::resolveOrCreateInventory(
+            $usages = DB::transaction(function () use ($request, $farm, $user) {
+                $overrideUnitCost = ($request->filled('unit_cost') && (float) $request->unit_cost > 0)
+                    ? (float) $request->unit_cost
+                    : null;
+
+                $preferredInventoryId = $request->filled('poultry_feed_inventory_id')
+                    ? (int) $request->poultry_feed_inventory_id
+                    : null;
+
+                $usages = FeedUsageInventoryService::deductFifo(
                     (int) $farm->id,
                     (int) $request->poultry_feed_type_id,
-                    $user->id,
-                    $request->filled('poultry_feed_inventory_id')
-                        ? (int) $request->poultry_feed_inventory_id
-                        : null
+                    (float) $request->quantity,
+                    (int) $request->flock_id,
+                    (string) $request->usage_date,
+                    auth()->id() ?? $user->id,
+                    $preferredInventoryId,
+                    $overrideUnitCost
                 );
-
-                FeedUsageInventoryService::deductFromInventory($feedInventory, (float) $request->quantity);
-
-                $unitCost = $request->filled('unit_cost')
-                    ? (float) $request->unit_cost
-                    : (float) ($feedInventory->unit_cost ?? 0);
-
-                $usage = PoultryFeedUsage::create([
-                    'farm_id' => $farm->id,
-                    'poultry_feed_inventory_id' => $feedInventory->id,
-                    'poultry_feed_type_id' => $request->poultry_feed_type_id,
-                    'flock_id' => $request->flock_id,
-                    'quantity' => $request->quantity,
-                    'unit_cost' => $unitCost,
-                    'usage_date' => $request->usage_date,
-                    'created_by' => auth()->id(),
-                ]);
 
                 $this->syncBatchScheduleItem(
                     $request->flock_id,
@@ -136,12 +129,24 @@ class FeedUsageController extends ApiController
                     $request->usage_date
                 );
 
-                return $usage;
+                return $usages;
             });
 
-            FlockExpenditure::recordFromFeedUsage($usage);
+            if (empty($usages)) {
+                return $this->sendError('Failed to record feed usage: zero quantity or invalid stock', [], 400);
+            }
 
-            return $this->sendResponse($usage->load(['feedInventory', 'feedType']), 'Feed usage created successfully', 201);
+            $primaryUsage = $usages[0];
+            $primaryUsage->load(['feedInventory', 'feedType']);
+
+            if (count($usages) > 1) {
+                $splitUsages = collect(array_slice($usages, 1))->map(function ($u) {
+                    return $u->load(['feedInventory', 'feedType']);
+                });
+                $primaryUsage->setAttribute('split_usages', $splitUsages);
+            }
+
+            return $this->sendResponse($primaryUsage, 'Feed usage created successfully', 201);
         } catch (\RuntimeException $e) {
             return $this->sendError($e->getMessage(), [], 400);
         }

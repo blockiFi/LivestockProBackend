@@ -68,34 +68,26 @@ class FeedingBatchScheduleItemService
             return null;
         }
 
-        $inventory = FeedUsageInventoryService::resolveOrCreateInventory(
+        $usages = FeedUsageInventoryService::deductFifo(
             $farmId,
             (int) $feedTypeId,
+            $feedKg,
+            $flock?->id,
+            $feedingDate,
             auth()->id(),
             $preferredInventoryId
         );
 
-        $wasAutoCreated = (float) $inventory->quantity <= 0
-            && str_starts_with((string) $inventory->batch_number, 'OVERDRAFT-');
-
-        FeedUsageInventoryService::deductFromInventory($inventory, $feedKg);
-
-        $usage = PoultryFeedUsage::create([
-            'farm_id' => $farmId,
-            'poultry_feed_inventory_id' => $inventory->id,
-            'poultry_feed_type_id' => $feedTypeId,
-            'flock_id' => $flock?->id,
-            'quantity' => $feedKg,
-            'unit_cost' => $inventory->unit_cost ?? 0,
-            'usage_date' => $feedingDate,
-            'created_by' => auth()->id(),
-        ]);
-
-        if ($flock) {
-            FlockExpenditure::recordFromFeedUsage($usage);
+        $hasOverdraft = false;
+        foreach ($usages as $usage) {
+            $inv = $usage->feedInventory;
+            if ($inv && ((float) $inv->quantity < 0 || str_starts_with((string) $inv->batch_number, 'OVERDRAFT-'))) {
+                $hasOverdraft = true;
+                break;
+            }
         }
 
-        if ($wasAutoCreated || (float) $inventory->fresh()->quantity < 0) {
+        if ($hasOverdraft) {
             return "{$feedingDate}: Feed deducted with zero-cost overdraft stock for feed type #{$feedTypeId} — update unit cost";
         }
 

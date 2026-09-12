@@ -282,25 +282,20 @@ class BatchChatToolExecutor
         }
 
         try {
-            $usage = DB::transaction(function () use ($farm, $flock, $user, $inventoryId, $qty, $args) {
-                $inventory = PoultryFeedInventory::where('farm_id', $farm->id)->findOrFail($inventoryId);
-                FeedUsageInventoryService::deductFromInventory($inventory, $qty);
-
-                $usage = PoultryFeedUsage::create([
-                    'farm_id' => $farm->id,
-                    'poultry_feed_inventory_id' => $inventory->id,
-                    'poultry_feed_type_id' => $inventory->poultry_feed_type_id,
-                    'flock_id' => $flock->id,
-                    'quantity' => $qty,
-                    'unit_cost' => (float) ($inventory->unit_cost ?? 0),
-                    'usage_date' => $args['usage_date'],
-                    'created_by' => $user->id,
-                ]);
-
-                FlockExpenditure::recordFromFeedUsage($usage);
-
-                return $usage;
-            });
+            $inventory = PoultryFeedInventory::where('farm_id', $farm->id)->findOrFail($inventoryId);
+            $usages = FeedUsageInventoryService::deductFifo(
+                $farm->id,
+                (int) $inventory->poultry_feed_type_id,
+                $qty,
+                $flock->id,
+                $args['usage_date'],
+                $user->id,
+                $inventory->id
+            );
+            $usage = $usages[0] ?? null;
+            if (!$usage) {
+                return $this->fail('Failed to create feed usage.');
+            }
         } catch (\Throwable $e) {
             return $this->fail($e->getMessage());
         }

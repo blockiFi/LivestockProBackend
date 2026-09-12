@@ -7,6 +7,7 @@ use App\Models\FlockExpenditure;
 use App\Models\PoultryFeedInventory;
 use App\Models\PoultryFeedInventorySettlement;
 use App\Models\PoultryFeedUsage;
+use Illuminate\Support\Facades\DB;
 
 class FeedUsageInventoryService
 {
@@ -137,6 +138,159 @@ class FeedUsageInventoryService
         self::recordTopUpOnNewInventory($target, $source, $quantity);
 
         return $quantity;
+    }
+
+    /**
+     * Deduct feed from inventory across batches in FIFO order (created_at ASC, id ASC).
+     * If a preferred batch is specified and has positive stock, it is prioritized first.
+     * When total requested quantity exceeds available stock across all positive batches,
+     * the remaining deficit is absorbed by the last positive batch (or an overdraft batch).
+     *
+     * @return PoultryFeedUsage[] List of created usage records
+     */
+    public static function deductFifo(
+        int $farmId,
+        int $feedTypeId,
+        float $totalQuantity,
+        ?int $flockId,
+        string $usageDate,
+        ?int $userId = null,
+        ?int $preferredInventoryId = null,
+        ?float $overrideUnitCost = null
+    ): array {
+        $remainingQty = round($totalQuantity, 3);
+        if ($remainingQty <= 0) {
+            return [];
+        }
+
+        return DB::transaction(function () use (
+            $farmId,
+            $feedTypeId,
+            $remainingQty,
+            $flockId,
+            $usageDate,
+            $userId,
+            $preferredInventoryId,
+            $overrideUnitCost
+        ) {
+            $preferredBatch = null;
+            if ($preferredInventoryId) {
+                $preferredBatch = PoultryFeedInventory::where('farm_id', $farmId)
+                    ->where('id', $preferredInventoryId)
+                    ->where('poultry_feed_type_id', $feedTypeId)
+                    ->where('quantity', '>', 0)
+                    ->whereIn('status', ['available', 'in_use'])
+                    ->lockForUpdate()
+                    ->first();
+            }
+
+            $otherBatchesQuery = PoultryFeedInventory::where('farm_id', $farmId)
+                ->where('poultry_feed_type_id', $feedTypeId)
+                ->where('quantity', '>', 0)
+                ->whereIn('status', ['available', 'in_use']);
+
+            if ($preferredBatch) {
+                $otherBatchesQuery->where('id', '!=', $preferredBatch->id);
+            }
+
+            $otherBatches = $otherBatchesQuery
+                ->orderBy('created_at', 'asc')
+                ->orderBy('id', 'asc')
+                ->lockForUpdate()
+                ->get();
+
+            $candidateBatches = collect();
+            if ($preferredBatch) {
+                $candidateBatches->push($preferredBatch);
+            }
+            $candidateBatches = $candidateBatches->merge($otherBatches);
+
+            $usages = [];
+            $batchCount = $candidateBatches->count();
+
+            if ($batchCount > 0) {
+                foreach ($candidateBatches as $index => $batch) {
+                    if ($remainingQty <= 0.0001) {
+                        break;
+                    }
+
+                    $isLastBatch = ($index === $batchCount - 1);
+                    $currentBatchQty = (float) $batch->quantity;
+
+                    if ($isLastBatch) {
+                        // The last available positive batch absorbs all remaining quantity
+                        // (even if it drives it to 0 or negative/overdraft)
+                        $deductQty = $remainingQty;
+                    } else {
+                        // Non-last batch: deduct up to what is available in this batch
+                        $deductQty = min($remainingQty, $currentBatchQty);
+                    }
+
+                    if ($deductQty <= 0) {
+                        continue;
+                    }
+
+                    self::deductFromInventory($batch, $deductQty);
+
+                    $unitCost = ($overrideUnitCost !== null && $overrideUnitCost > 0)
+                        ? $overrideUnitCost
+                        : (float) ($batch->unit_cost ?? 0);
+
+                    $usage = PoultryFeedUsage::create([
+                        'farm_id' => $farmId,
+                        'poultry_feed_inventory_id' => $batch->id,
+                        'poultry_feed_type_id' => $feedTypeId,
+                        'flock_id' => $flockId,
+                        'quantity' => $deductQty,
+                        'unit_cost' => $unitCost,
+                        'usage_date' => $usageDate,
+                        'created_by' => $userId,
+                    ]);
+
+                    if ($flockId) {
+                        FlockExpenditure::recordFromFeedUsage($usage);
+                    }
+
+                    $usages[] = $usage;
+                    $remainingQty = round($remainingQty - $deductQty, 3);
+                }
+            }
+
+            // If no positive batches were available at all, resolve or create overdraft batch
+            if (empty($usages) && $remainingQty > 0.0001) {
+                $overdraftBatch = self::resolveOrCreateInventory(
+                    $farmId,
+                    $feedTypeId,
+                    $userId,
+                    $preferredInventoryId
+                );
+
+                self::deductFromInventory($overdraftBatch, $remainingQty);
+
+                $unitCost = ($overrideUnitCost !== null && $overrideUnitCost > 0)
+                    ? $overrideUnitCost
+                    : (float) ($overdraftBatch->unit_cost ?? 0);
+
+                $usage = PoultryFeedUsage::create([
+                    'farm_id' => $farmId,
+                    'poultry_feed_inventory_id' => $overdraftBatch->id,
+                    'poultry_feed_type_id' => $feedTypeId,
+                    'flock_id' => $flockId,
+                    'quantity' => $remainingQty,
+                    'unit_cost' => $unitCost,
+                    'usage_date' => $usageDate,
+                    'created_by' => $userId,
+                ]);
+
+                if ($flockId) {
+                    FlockExpenditure::recordFromFeedUsage($usage);
+                }
+
+                $usages[] = $usage;
+            }
+
+            return $usages;
+        });
     }
 
     /**
