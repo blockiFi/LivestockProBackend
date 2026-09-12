@@ -16,6 +16,7 @@ use App\Models\PoultryType;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
 class FlockSaleTest extends TestCase
@@ -50,6 +51,7 @@ class FlockSaleTest extends TestCase
         $ownerRole->givePermissionTo($permissions);
 
         $this->farm->users()->attach($this->user->id);
+        app(PermissionRegistrar::class)->setPermissionsTeamId($this->farm->id);
         $this->user->assignRole($ownerRole);
 
         $poultryType = PoultryType::factory()->create();
@@ -443,5 +445,33 @@ class FlockSaleTest extends TestCase
         $this->assertEquals('active', $flock->status);
         $this->assertNull($flock->actual_end_date);
         $this->assertEquals(100, $flock->actual_quantity);
+    }
+
+    public function test_sale_creates_and_updates_with_customer_fields(): void
+    {
+        $date = now()->toDateString();
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/flocks/{$this->flock->id}/sales", [
+                'quantity' => 10,
+                'unit_price' => 2500,
+                'date' => $date,
+                'customer_name' => 'John Doe',
+                'customer_phone' => '+2348012345678',
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.customer_name', 'John Doe')
+            ->assertJsonPath('data.customer_phone', '+2348012345678');
+
+        $saleId = $response->json('data.id');
+
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->putJson("/api/farms/{$this->farm->id}/flocks/{$this->flock->id}/sales/{$saleId}", [
+                'customer_name' => 'Jane Smith',
+                'customer_phone' => '+2348098765432',
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('data.customer_name', 'Jane Smith')
+            ->assertJsonPath('data.customer_phone', '+2348098765432');
     }
 }

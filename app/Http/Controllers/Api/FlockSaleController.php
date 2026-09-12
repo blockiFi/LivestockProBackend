@@ -97,7 +97,7 @@ class FlockSaleController extends ApiController
 
         try {
             $batchClosed = false;
-            $sale = DB::transaction(function () use ($request, $farm, $flock, $quantity, $unitPrice, $totalAmount, &$batchClosed) {
+            $sale = DB::transaction(function () use ($request, $farm, $flock, $quantity, $unitPrice, $totalAmount, $customerFields, &$batchClosed) {
                 [$dailyRecordId, $cullsApplied] = FlockSaleCullingService::applySaleCulling(
                     $flock,
                     $request->date,
@@ -145,8 +145,8 @@ class FlockSaleController extends ApiController
             return $this->sendUnauthorizedError('Unauthorized to update flock sales');
         }
 
-        if ($response = $this->ensureFlockIsActive($flock)) {
-            return $response;
+        if ($flock->status !== 'active' && $flock->status !== 'sold') {
+            return $this->sendError('This batch has ended. No further updates are allowed.', [], 403);
         }
 
         $sale = FlockSale::where('farm_id', $farmId)
@@ -194,7 +194,7 @@ class FlockSaleController extends ApiController
 
         try {
             $batchClosed = false;
-            $sale = DB::transaction(function () use ($request, $flock, $sale, $newQuantity, $newDate, $newUnitPrice, &$batchClosed) {
+            $sale = DB::transaction(function () use ($request, $flock, $sale, $newQuantity, $newDate, $newUnitPrice, $customerFields, &$batchClosed) {
                 [$dailyRecordId, $cullsApplied] = FlockSaleCullingService::replaceSaleCulling(
                     $sale,
                     $flock,
@@ -241,8 +241,8 @@ class FlockSaleController extends ApiController
             return $this->sendUnauthorizedError('Unauthorized to delete flock sales');
         }
 
-        if ($response = $this->ensureFlockIsActive($flock)) {
-            return $response;
+        if ($flock->status !== 'active' && $flock->status !== 'sold') {
+            return $this->sendError('This batch has ended. No further updates are allowed.', [], 403);
         }
 
         $sale = FlockSale::where('farm_id', $farmId)
