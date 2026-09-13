@@ -7,13 +7,56 @@ use App\Models\Flock;
 use App\Models\FlockChatMemory;
 use App\Models\FlockChatSession;
 use App\Services\BatchChat\BatchChatAgentService;
+use App\Services\LlmService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 use Spatie\Permission\PermissionRegistrar;
 
 class FlockBatchChatController extends ApiController
 {
-    public function __construct(protected BatchChatAgentService $agent)
+    public function __construct(
+        protected BatchChatAgentService $agent,
+        protected LlmService $llm,
+    ) {
+    }
+
+    public function transcribe(Request $request, $farm, $flock)
     {
+        [$farm, $flock, $error] = $this->authorizeFlock($request, $farm, $flock);
+        if ($error) {
+            return $error;
+        }
+
+        $maxKb = (int) config('llm.transcription.max_kb', 10240);
+        $validator = Validator::make($request->all(), [
+            'audio' => [
+                'required',
+                'file',
+                "max:{$maxKb}",
+                function (string $attribute, $value, \Closure $fail) {
+                    $ext = strtolower((string) $value->getClientOriginalExtension());
+                    $allowed = ['webm', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'ogg', 'mp3'];
+                    if (! in_array($ext, $allowed, true)) {
+                        $fail('The audio file must be one of: '.implode(', ', $allowed).'.');
+                    }
+                },
+            ],
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $text = $this->llm->transcribe($request->file('audio'));
+        if ($text === null || trim($text) === '') {
+            return $this->sendError(
+                $this->llm->getLastError() ?: 'Could not transcribe audio',
+                [],
+                422
+            );
+        }
+
+        return $this->sendResponse(['text' => $text], 'Audio transcribed successfully');
     }
 
     public function indexSessions(Request $request, $farm, $flock)

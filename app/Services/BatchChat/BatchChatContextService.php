@@ -268,6 +268,8 @@ class BatchChatContextService
             .'future dates with status "scheduled" are still on the plan. '
             .'list_recent_records(vaccinations/medications) is administered history, not the planned schedule. '
             .'For writes (creating records), call the appropriate tool; the UI will ask the user to Confirm before execution. '
+            .'VOICE / MORTALITY: When the user says birds died, dead birds, mortality, or similar (e.g. "Add 12 dead birds today"), '
+            .'call create_mortality_report with mortality_count and date (default today if omitted). Do not only acknowledge in text. '
             .'Explain results clearly; when discussing eggs, you may mention crates of 30 eggs. '
             .'Be concise and practical for tropical poultry farms.';
     }

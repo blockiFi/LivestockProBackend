@@ -18,6 +18,17 @@ return [
         'model' => env('OPENAI_MODEL', env('LLM_MODEL', 'gpt-4o')),
         // Vision calls with multiple pages can take longer than 30s.
         'timeout' => env('OPENAI_TIMEOUT', 120),
+        'whisper_model' => env('OPENAI_WHISPER_MODEL', 'whisper-1'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Audio transcription (batch chat voice fallback)
+    |--------------------------------------------------------------------------
+    */
+    'transcription' => [
+        // Max upload size in kilobytes (10MB default).
+        'max_kb' => env('OPENAI_WHISPER_MAX_KB', 10240),
     ],
 
     /*

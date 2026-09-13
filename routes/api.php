@@ -188,6 +188,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{flock}/metrics/comparative', [FlockMetricsAnalysisController::class, 'refreshComparative'])->middleware('farm.ai');
 
             Route::prefix('{flock}/batch-chat')->middleware('farm.ai')->group(function () {
+                Route::post('/transcribe', [FlockBatchChatController::class, 'transcribe']);
                 Route::get('/sessions', [FlockBatchChatController::class, 'indexSessions']);
                 Route::post('/sessions', [FlockBatchChatController::class, 'storeSession']);
                 Route::get('/sessions/{session}', [FlockBatchChatController::class, 'showSession']);

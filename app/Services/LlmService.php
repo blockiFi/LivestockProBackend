@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 
 class LlmService
@@ -249,6 +250,79 @@ class LlmService
             return $content ?: null;
         } catch (\Throwable $e) {
             $this->setLastError('LLM exception: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Transcribe audio via OpenAI-compatible Whisper endpoint.
+     *
+     * @param  UploadedFile|string  $file  Uploaded file or absolute path on disk
+     */
+    public function transcribe(UploadedFile|string $file, ?string $filename = null): ?string
+    {
+        $this->setLastError(null);
+        $provider = config('llm.provider', 'openai');
+
+        if ($provider !== 'openai') {
+            $this->setLastError('Unsupported LLM provider: '.$provider);
+
+            return null;
+        }
+
+        $config = config('llm.openai');
+        $apiKey = $config['api_key'] ?? null;
+        $baseUrl = $config['base_url'] ?? 'https://api.openai.com';
+        $model = $config['whisper_model'] ?? 'whisper-1';
+
+        if (! $apiKey) {
+            $this->setLastError('Missing LLM API key (AI_API_KEY/LLM_API_KEY)');
+
+            return null;
+        }
+
+        if ($file instanceof UploadedFile) {
+            $path = $file->getRealPath() ?: $file->getPathname();
+            $filename = $filename ?: ($file->getClientOriginalName() ?: 'audio.webm');
+            $mime = $file->getMimeType() ?: 'application/octet-stream';
+        } else {
+            $path = $file;
+            $filename = $filename ?: basename($path);
+            $mime = 'application/octet-stream';
+        }
+
+        if (! is_string($path) || $path === '' || ! is_readable($path)) {
+            $this->setLastError('Audio file is not readable');
+
+            return null;
+        }
+
+        try {
+            $response = Http::withToken($apiKey)
+                ->timeout($config['timeout'] ?? 120)
+                ->attach('file', file_get_contents($path), $filename, ['Content-Type' => $mime])
+                ->post("{$baseUrl}/v1/audio/transcriptions", [
+                    'model' => $model,
+                    'response_format' => 'json',
+                ]);
+
+            if (! $response->ok()) {
+                $this->setLastError('Whisper HTTP error '.$response->status().': '.substr($response->body() ?? '', 0, 500));
+
+                return null;
+            }
+
+            $text = trim((string) ($response->json('text') ?? ''));
+            if ($text === '') {
+                $this->setLastError('Whisper response missing text');
+
+                return null;
+            }
+
+            return $text;
+        } catch (\Throwable $e) {
+            $this->setLastError('Whisper exception: '.$e->getMessage());
+
             return null;
         }
     }
