@@ -376,9 +376,19 @@ class SalesRecordController extends ApiController
         }
 
         if (in_array($mode, ['customer_account', 'account_and_other'], true)) {
-            if (! $request->user()->hasPermissionTo('use customer account for payment', 'api', $farm)
-                && ! $request->user()->hasPermissionTo('manage customers', 'api', $farm)
-                && ! $request->user()->hasPermissionTo('create sales', 'api', $farm)) {
+            $canUseAccount = false;
+            foreach (['use customer account for payment', 'manage customers', 'create sales'] as $permission) {
+                try {
+                    if ($request->user()->hasPermissionTo($permission, 'api', $farm)) {
+                        $canUseAccount = true;
+                        break;
+                    }
+                } catch (\App\Exceptions\PermissionDoesNotExist) {
+                    continue;
+                }
+            }
+
+            if (! $canUseAccount) {
                 return [
                     'amount_paid' => 0,
                     'payment_status' => 'pending',

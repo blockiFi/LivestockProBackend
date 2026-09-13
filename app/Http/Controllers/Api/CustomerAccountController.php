@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Exceptions\InsufficientCustomerAccountBalance;
+use App\Exceptions\PermissionDoesNotExist;
 use App\Models\Customer;
 use App\Models\CustomerAccountTransaction;
 use App\Models\Farm;
+use App\Models\User;
 use App\Services\CustomerAccountService;
 use App\Services\Notifications\CustomerAccountNotifier;
 use Illuminate\Http\Request;
@@ -55,7 +57,7 @@ class CustomerAccountController extends ApiController
     {
         [$farm, $customer] = $this->resolveCustomer($farmId, $customerId);
 
-        if (! $request->user()->hasPermissionTo('top up customer accounts', 'api', $farm)) {
+        if (! $this->userCan($request->user(), $farm, 'top up customer accounts')) {
             return $this->sendUnauthorizedError('Unauthorized to top up customer accounts');
         }
 
@@ -134,7 +136,7 @@ class CustomerAccountController extends ApiController
     {
         [$farm, $customer] = $this->resolveCustomer($farmId, $customerId);
 
-        if (! $request->user()->hasPermissionTo('adjust customer accounts', 'api', $farm)) {
+        if (! $this->userCan($request->user(), $farm, 'adjust customer accounts')) {
             return $this->sendUnauthorizedError('Unauthorized to adjust customer accounts');
         }
 
@@ -166,7 +168,7 @@ class CustomerAccountController extends ApiController
     {
         [$farm, $customer] = $this->resolveCustomer($farmId, $customerId);
 
-        if (! $request->user()->hasPermissionTo('reverse customer account transactions', 'api', $farm)) {
+        if (! $this->userCan($request->user(), $farm, 'reverse customer account transactions')) {
             return $this->sendUnauthorizedError('Unauthorized to reverse account transactions');
         }
 
@@ -200,7 +202,7 @@ class CustomerAccountController extends ApiController
     {
         [$farm, $customer] = $this->resolveCustomer($farmId, $customerId);
 
-        if (! $request->user()->hasPermissionTo('refund customer accounts', 'api', $farm)) {
+        if (! $this->userCan($request->user(), $farm, 'refund customer accounts')) {
             return $this->sendUnauthorizedError('Unauthorized to refund customer accounts');
         }
 
@@ -247,11 +249,38 @@ class CustomerAccountController extends ApiController
 
     protected function canViewAccounts(Request $request, Farm $farm): bool
     {
-        $user = $request->user();
+        return $this->userCanAny($request->user(), $farm, [
+            'view customer accounts',
+            'view customers',
+            'manage customers',
+        ]);
+    }
 
-        return $user->hasPermissionTo('view customer accounts', 'api', $farm)
-            || $user->hasPermissionTo('view customers', 'api', $farm)
-            || $user->hasPermissionTo('manage customers', 'api', $farm);
+    protected function userCan(?User $user, Farm $farm, string $permission): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        try {
+            return $user->hasPermissionTo($permission, 'api', $farm);
+        } catch (PermissionDoesNotExist) {
+            return false;
+        }
+    }
+
+    /**
+     * @param  list<string>  $permissions
+     */
+    protected function userCanAny(?User $user, Farm $farm, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            if ($this->userCan($user, $farm, $permission)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
