@@ -57,7 +57,7 @@ class CustomerAccountController extends ApiController
     {
         [$farm, $customer] = $this->resolveCustomer($farmId, $customerId);
 
-        if (! $this->userCan($request->user(), $farm, 'top up customer accounts')) {
+        if (! $this->canTopUpAccounts($request, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to top up customer accounts');
         }
 
@@ -136,7 +136,7 @@ class CustomerAccountController extends ApiController
     {
         [$farm, $customer] = $this->resolveCustomer($farmId, $customerId);
 
-        if (! $this->userCan($request->user(), $farm, 'adjust customer accounts')) {
+        if (! $this->canAdjustAccounts($request, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to adjust customer accounts');
         }
 
@@ -168,7 +168,7 @@ class CustomerAccountController extends ApiController
     {
         [$farm, $customer] = $this->resolveCustomer($farmId, $customerId);
 
-        if (! $this->userCan($request->user(), $farm, 'reverse customer account transactions')) {
+        if (! $this->canReverseAccountTransactions($request, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to reverse account transactions');
         }
 
@@ -202,7 +202,7 @@ class CustomerAccountController extends ApiController
     {
         [$farm, $customer] = $this->resolveCustomer($farmId, $customerId);
 
-        if (! $this->userCan($request->user(), $farm, 'refund customer accounts')) {
+        if (! $this->canRefundAccounts($request, $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to refund customer accounts');
         }
 
@@ -256,14 +256,48 @@ class CustomerAccountController extends ApiController
         ]);
     }
 
+    protected function canTopUpAccounts(Request $request, Farm $farm): bool
+    {
+        return $this->userCanAny($request->user(), $farm, [
+            'top up customer accounts',
+            'manage customers',
+        ]);
+    }
+
+    protected function canAdjustAccounts(Request $request, Farm $farm): bool
+    {
+        return $this->userCanAny($request->user(), $farm, [
+            'adjust customer accounts',
+            'manage customers',
+        ]);
+    }
+
+    protected function canRefundAccounts(Request $request, Farm $farm): bool
+    {
+        return $this->userCanAny($request->user(), $farm, [
+            'refund customer accounts',
+            'manage customers',
+        ]);
+    }
+
+    protected function canReverseAccountTransactions(Request $request, Farm $farm): bool
+    {
+        return $this->userCanAny($request->user(), $farm, [
+            'reverse customer account transactions',
+            'manage customers',
+        ]);
+    }
+
     protected function userCan(?User $user, Farm $farm, string $permission): bool
     {
         if (! $user) {
             return false;
         }
 
+        app(\Spatie\Permission\PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+
         try {
-            return $user->hasPermissionTo($permission, 'api', $farm);
+            return $user->hasPermissionTo($permission, 'api');
         } catch (PermissionDoesNotExist) {
             return false;
         }

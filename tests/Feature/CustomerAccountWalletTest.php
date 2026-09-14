@@ -289,6 +289,34 @@ class CustomerAccountWalletTest extends TestCase
             ->assertCreated();
     }
 
+    public function test_manage_customers_permission_allows_top_up(): void
+    {
+        $manager = User::factory()->create();
+        $token = $manager->createToken('mgr')->plainTextToken;
+
+        $perms = collect(['view customers', 'manage customers', 'view customer accounts'])
+            ->map(fn (string $name) => Permission::firstOrCreate(['name' => $name, 'guard_name' => 'api']));
+
+        $role = Role::create([
+            'name' => 'manager',
+            'guard_name' => 'api',
+            'farm_id' => $this->farm->id,
+        ]);
+        $role->givePermissionTo($perms);
+
+        $this->farm->users()->attach($manager->id);
+        app(PermissionRegistrar::class)->setPermissionsTeamId($this->farm->id);
+        $manager->assignRole($role);
+
+        $this->withToken($token)
+            ->postJson("/api/farms/{$this->farm->id}/customers/{$this->customer->id}/account/top-ups", [
+                'amount' => 5000,
+                'payment_method' => 'cash',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.new_balance', 5000);
+    }
+
     private function topUp(float $amount): void
     {
         $this->withToken($this->token)
