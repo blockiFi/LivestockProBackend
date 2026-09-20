@@ -257,14 +257,20 @@ class BatchChatToolRegistry
             ],
             [
                 'name' => 'create_product_sale',
-                'description' => 'Propose a product sale (egg/meat/manure). Egg sales check stock. Requires Confirm.',
+                'description' => 'Propose a product sale (egg/meat/manure). For egg sales, quantity is crates and unit_price is per crate (30 eggs/crate). Egg sales check stock. Requires Confirm.',
                 'parameters' => [
                     'type' => 'object',
                     'properties' => [
                         'date' => ['type' => 'string'],
                         'type' => ['type' => 'string', 'enum' => ['egg', 'meat', 'manure']],
-                        'quantity' => ['type' => 'number'],
-                        'unit_price' => ['type' => 'number'],
+                        'quantity' => [
+                            'type' => 'number',
+                            'description' => 'For egg: crates. For meat/manure: product units.',
+                        ],
+                        'unit_price' => [
+                            'type' => 'number',
+                            'description' => 'For egg: price per crate. For meat/manure: price per unit.',
+                        ],
                         'customer_name' => ['type' => 'string'],
                         'customer_phone' => ['type' => 'string'],
                         'customer_id' => ['type' => 'integer'],
@@ -300,7 +306,15 @@ class BatchChatToolRegistry
             'create_vaccination_record' => sprintf('Vaccination #%s on %s', $args['poultry_vaccine_id'] ?? '?', $args['date'] ?? '?'),
             'create_expenditure' => sprintf('%s expenditure of %s on %s', $args['category'] ?? '?', $args['amount'] ?? '?', $args['date'] ?? '?'),
             'create_flock_sale' => sprintf('Sell %s birds @ %s on %s', $args['quantity'] ?? '?', $args['unit_price'] ?? '?', $args['date'] ?? '?'),
-            'create_product_sale' => sprintf('Sell %s %s @ %s on %s', $args['quantity'] ?? '?', $args['type'] ?? 'product', $args['unit_price'] ?? '?', $args['date'] ?? '?'),
+            'create_product_sale' => sprintf(
+                'Sell %s %s @ %s on %s',
+                ($args['type'] ?? '') === 'egg'
+                    ? (($args['quantity'] ?? '?').' crates')
+                    : ($args['quantity'] ?? '?'),
+                $args['type'] ?? 'product',
+                $args['unit_price'] ?? '?',
+                $args['date'] ?? '?'
+            ),
             default => $name,
         };
     }

@@ -130,11 +130,12 @@ class EnhancedSalesRecordSeeder extends Seeder
         $remainingEggs = $totalEggs;
         $salesCount = $faker->numberBetween(1, 3);
         
-        for ($i = 0; $i < $salesCount && $remainingEggs > 0; $i++) {
+        for ($i = 0; $i < $salesCount && $remainingEggs >= 30; $i++) {
             $customer = $customers->random();
             $flock = $layerFlocks->random();
-            $quantity = min($remainingEggs, $faker->numberBetween(50, 200));
-            $remainingEggs -= $quantity;
+            $maxCrates = (int) floor($remainingEggs / 30);
+            $quantity = min($maxCrates, $faker->numberBetween(2, 7)); // crates
+            $remainingEggs -= $quantity * 30;
 
             $unitPrice = $this->getEggPrice($date, $faker);
             $totalPrice = round($quantity * $unitPrice, 2);
@@ -202,7 +203,7 @@ class EnhancedSalesRecordSeeder extends Seeder
         // Large egg orders for restaurants/hotels
         if ($faker->boolean(50)) {
             $customer = $customers->random();
-            $quantity = $faker->numberBetween(500, 2000);
+            $quantity = $faker->numberBetween(17, 67); // crates (~500–2000 eggs)
             $unitPrice = $this->getEggPrice($date, $faker) * 0.9; // 10% discount for bulk
             $totalPrice = $quantity * $unitPrice;
             
@@ -253,8 +254,8 @@ class EnhancedSalesRecordSeeder extends Seeder
     {
         $month = $date->month;
         
-        // Seasonal price variations
-        $basePrice = 0.25; // $0.25 per egg base price
+        // Seasonal price variations — price per crate (30 eggs)
+        $basePrice = 7.5; // $7.50 per crate (~$0.25 per egg)
         
         $seasonalMultiplier = [
             1 => 1.1,  // January - slightly higher
@@ -336,7 +337,7 @@ class EnhancedSalesRecordSeeder extends Seeder
     private function generateEggSaleNotes($faker, $quantity, $unitPrice)
     {
         $notes = [
-            "Regular egg sale - {$quantity} eggs at \${$unitPrice} each",
+            "Regular egg sale - {$quantity} crates at \${$unitPrice} per crate",
             "Fresh farm eggs - customer pickup",
             "Quality eggs from free-range layers",
             "Premium grade eggs - special order",

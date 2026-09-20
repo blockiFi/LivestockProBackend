@@ -109,6 +109,7 @@ class SalesRecordController extends ApiController
         $validator = Validator::make($request->all(), [
             'type' => 'required|in:egg,meat,manure',
             'flock_id' => 'nullable|exists:flocks,id',
+            // For type=egg: quantity is crates, unit_price is price per crate.
             'quantity' => 'required|numeric|min:0.01',
             'unit_price' => 'required|numeric|min:0',
             'date' => 'required|date',

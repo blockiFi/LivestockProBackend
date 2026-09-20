@@ -415,8 +415,8 @@ class FlockBatchChatTest extends TestCase
             'farm_id' => $this->farm->id,
             'flock_id' => $this->flock->id,
             'type' => 'egg',
-            'quantity' => 100,
-            'unit_price' => 50,
+            'quantity' => 4, // crates
+            'unit_price' => 1250,
             'total_amount' => 5000,
             'amount_paid' => 5000,
             'date' => '2026-08-05',
@@ -427,8 +427,8 @@ class FlockBatchChatTest extends TestCase
             'farm_id' => $this->farm->id,
             'flock_id' => $this->flock->id,
             'type' => 'egg',
-            'quantity' => 200,
-            'unit_price' => 50,
+            'quantity' => 8, // crates
+            'unit_price' => 1250,
             'total_amount' => 10000,
             'amount_paid' => 10000,
             'date' => '2026-08-31',
@@ -440,8 +440,8 @@ class FlockBatchChatTest extends TestCase
             'farm_id' => $this->farm->id,
             'flock_id' => $this->flock->id,
             'type' => 'egg',
-            'quantity' => 50,
-            'unit_price' => 50,
+            'quantity' => 2,
+            'unit_price' => 1250,
             'total_amount' => 2500,
             'amount_paid' => 2500,
             'date' => '2026-07-20',
@@ -469,7 +469,7 @@ class FlockBatchChatTest extends TestCase
         $dates = collect($rows)->pluck('date')->all();
         $this->assertContains('2026-08-05', $dates);
         $this->assertContains('2026-08-31', $dates);
-        $this->assertSame(300.0, (float) $result['data']['summary']['total_quantity']);
+        $this->assertSame(12.0, (float) $result['data']['summary']['total_quantity']);
         $this->assertSame(15000.0, (float) $result['data']['summary']['total_amount']);
     }
 }

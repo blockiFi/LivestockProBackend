@@ -20,6 +20,7 @@ class FlockRecordImportTemplateService
                 ['Dates should be YYYY-MM-DD.'],
                 ['For feed_usage, provide poultry_feed_type (name) matching a farm feed type.'],
                 ['For product_sale, type must be egg, meat, or manure.'],
+                ['For egg product_sale, quantity is crates and unit_price is price per crate (30 eggs/crate).'],
                 ['Expenditure categories: feed, medication, vaccination, labour, transport, utilities, equipment, housing, chicks, maintenance, other'],
                 ['Do not duplicate mortality/eggs/feed on the same date as a daily row that already fills those fields.'],
             ],
@@ -100,8 +101,8 @@ class FlockRecordImportTemplateService
             FlockRecordImportItem::TYPE_PRODUCT_SALE => [
                 'date' => '2026-09-03',
                 'type' => 'egg',
-                'quantity' => 30,
-                'unit_price' => 250,
+                'quantity' => 2, // crates
+                'unit_price' => 1500, // per crate
             ],
             default => ['date' => '2026-09-01'],
         };

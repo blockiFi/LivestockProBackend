@@ -151,6 +151,7 @@ class FlockRecordImportAiService
             .'}]}. '
             ."record_type must be one of: {$types}. "
             .'For product_sale, type is egg|meat|manure. '
+            .'For egg product_sale, quantity is crates and unit_price is price per crate (30 eggs/crate). '
             .'For flock_sale, quantity is bird count. '
             .'Skip empty rows. '.$feedHint;
     }

@@ -283,8 +283,8 @@ class FlockRecordImportTest extends TestCase
             'payload' => [
                 'date' => '2026-05-01',
                 'type' => 'egg',
-                'quantity' => 90,
-                'unit_price' => 50,
+                'quantity' => 3, // crates
+                'unit_price' => 1500,
             ],
             'status' => 'valid',
         ]);
@@ -299,7 +299,7 @@ class FlockRecordImportTest extends TestCase
         $this->assertDatabaseHas('sales_records', [
             'flock_id' => $this->flock->id,
             'type' => 'egg',
-            'quantity' => 90,
+            'quantity' => 3,
         ]);
     }
 

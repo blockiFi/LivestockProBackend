@@ -18,8 +18,10 @@ class SalesRecordSeeder extends Seeder
 
         foreach ($customers as $customer) {
             foreach (range(1, 2) as $i) {
-                $quantity = rand(10, 100);
-                $unitPrice = rand(100, 500);
+                $type = ['egg', 'meat', 'manure'][array_rand(['egg', 'meat', 'manure'])];
+                // Egg sales store crates + price per crate; other types keep product units.
+                $quantity = $type === 'egg' ? rand(1, 10) : rand(10, 100);
+                $unitPrice = $type === 'egg' ? rand(1200, 2000) : rand(100, 500);
 
                 SalesRecord::create([
                     'customer_id' => $customer->id,
@@ -31,7 +33,7 @@ class SalesRecordSeeder extends Seeder
                     'date' => now()->subDays($i)->toDateString(),
                     'payment_status' => 'paid',
                     'notes' => 'Sales record note',
-                    'type' => ['egg', 'meat', 'manure'][array_rand(['egg', 'meat', 'manure'])],
+                    'type' => $type,
                     'created_by' => count($userIds) ? $userIds[array_rand($userIds)] : null,
                 ]);
             }

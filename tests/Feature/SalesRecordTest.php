@@ -105,8 +105,8 @@ class SalesRecordTest extends TestCase
             ->postJson("/api/farms/{$this->farm->id}/sales-records", [
                 'type' => 'egg',
                 'flock_id' => $this->flock->id,
-                'quantity' => 120,
-                'unit_price' => 50,
+                'quantity' => 4, // crates
+                'unit_price' => 1500, // per crate
                 'date' => $date,
                 'customer_id' => $this->customer->id,
                 'payment_status' => 'paid',
@@ -120,7 +120,7 @@ class SalesRecordTest extends TestCase
             'farm_id' => $this->farm->id,
             'flock_id' => $this->flock->id,
             'type' => 'egg',
-            'quantity' => 120,
+            'quantity' => 4,
         ]);
     }
 
@@ -139,12 +139,13 @@ class SalesRecordTest extends TestCase
             'recorded_by' => $this->user->id,
         ]);
 
+        // 3 crates = 90 eggs > 50 available
         $this->withHeader('Authorization', 'Bearer ' . $this->token)
             ->postJson("/api/farms/{$this->farm->id}/sales-records", [
                 'type' => 'egg',
                 'flock_id' => $this->flock->id,
-                'quantity' => 80,
-                'unit_price' => 50,
+                'quantity' => 3,
+                'unit_price' => 1500,
                 'date' => $date,
             ])
             ->assertStatus(422);
@@ -175,7 +176,7 @@ class SalesRecordTest extends TestCase
             'recorded_by' => $this->user->id,
         ]);
 
-        // Sale day itself has little production, but prior stock (365) is enough for 300.
+        // Sale day itself has little production, but prior stock (365 eggs) is enough for 10 crates (300 eggs).
         FlockDailyRecord::create([
             'flock_id' => $this->flock->id,
             'farm_id' => $this->farm->id,
@@ -191,15 +192,15 @@ class SalesRecordTest extends TestCase
             ->postJson("/api/farms/{$this->farm->id}/sales-records", [
                 'type' => 'egg',
                 'flock_id' => $this->flock->id,
-                'quantity' => 300,
-                'unit_price' => 50,
+                'quantity' => 10, // crates
+                'unit_price' => 1500,
                 'date' => now()->toDateString(),
                 'customer_id' => $this->customer->id,
                 'payment_status' => 'paid',
             ]);
 
         $response->assertStatus(201);
-        $this->assertEquals(300.0, (float) $response->json('data.quantity'));
+        $this->assertEquals(10.0, (float) $response->json('data.quantity'));
     }
 
     public function test_egg_stock_endpoint_returns_breakdown(): void
@@ -216,14 +217,15 @@ class SalesRecordTest extends TestCase
             'recorded_by' => $this->user->id,
         ]);
 
+        // 2 crates sold = 60 eggs
         SalesRecord::create([
             'farm_id' => $this->farm->id,
             'flock_id' => $this->flock->id,
             'type' => 'egg',
-            'quantity' => 50,
-            'unit_price' => 40,
-            'total_amount' => 2000,
-            'amount_paid' => 2000,
+            'quantity' => 2,
+            'unit_price' => 1200,
+            'total_amount' => 2400,
+            'amount_paid' => 2400,
             'date' => now()->toDateString(),
             'payment_status' => 'paid',
             'created_by' => $this->user->id,
@@ -235,8 +237,8 @@ class SalesRecordTest extends TestCase
         $response->assertStatus(200)
             ->assertJsonPath('data.produced', 200)
             ->assertJsonPath('data.broken', 10)
-            ->assertJsonPath('data.sold', 50)
-            ->assertJsonPath('data.available', 140);
+            ->assertJsonPath('data.sold', 60)
+            ->assertJsonPath('data.available', 130);
     }
 
     public function test_egg_sale_stock_uses_sale_date_not_future_collections(): void
@@ -262,13 +264,13 @@ class SalesRecordTest extends TestCase
             'recorded_by' => $this->user->id,
         ]);
 
-        // Backdated sale can only use eggs collected on/before that date (100).
+        // Backdated sale: 5 crates = 150 eggs > 100 available on that date.
         $this->withHeader('Authorization', 'Bearer ' . $this->token)
             ->postJson("/api/farms/{$this->farm->id}/sales-records", [
                 'type' => 'egg',
                 'flock_id' => $this->flock->id,
-                'quantity' => 150,
-                'unit_price' => 50,
+                'quantity' => 5,
+                'unit_price' => 1500,
                 'date' => now()->subDays(5)->toDateString(),
                 'customer_id' => $this->customer->id,
                 'payment_status' => 'paid',
@@ -312,8 +314,8 @@ class SalesRecordTest extends TestCase
             'farm_id' => $this->farm->id,
             'flock_id' => $this->flock->id,
             'type' => 'egg',
-            'quantity' => 100,
-            'unit_price' => 30,
+            'quantity' => 2, // crates
+            'unit_price' => 1500, // per crate
             'total_amount' => 3000,
             'date' => $date,
             'payment_status' => 'paid',

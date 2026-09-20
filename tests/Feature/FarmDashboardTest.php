@@ -283,8 +283,8 @@ class FarmDashboardTest extends TestCase
             'farm_id' => $this->farm->id,
             'flock_id' => $this->flock->id,
             'type' => 'egg',
-            'quantity' => 100,
-            'unit_price' => 20,
+            'quantity' => 4, // crates
+            'unit_price' => 500,
             'total_amount' => 2000,
             'date' => $date,
             'payment_status' => 'paid',

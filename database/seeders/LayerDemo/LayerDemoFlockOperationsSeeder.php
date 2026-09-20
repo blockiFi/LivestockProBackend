@@ -495,13 +495,14 @@ class LayerDemoFlockOperationsSeeder extends Seeder
                 continue;
             }
 
-            $maxSale = (int) floor($metrics['eggs'] * 0.8);
-            if ($maxSale < 30) {
+            $maxSaleEggs = (int) floor($metrics['eggs'] * 0.8);
+            if ($maxSaleEggs < 30) {
                 continue;
             }
 
-            $quantity = $faker->numberBetween(30, $maxSale);
-            $unitPrice = $faker->randomFloat(2, 45, 65);
+            $maxCrates = (int) floor($maxSaleEggs / 30);
+            $quantity = $faker->numberBetween(1, max(1, $maxCrates)); // crates
+            $unitPrice = $faker->randomFloat(2, 1350, 1950); // per crate (~45–65 per egg)
             $customer = $customers[array_rand($customers)];
 
             SalesRecord::create([
@@ -517,7 +518,7 @@ class LayerDemoFlockOperationsSeeder extends Seeder
                 'customer_phone' => $customer->phone,
                 'payment_method' => $faker->randomElement(['cash', 'transfer', 'pos']),
                 'payment_status' => $faker->randomElement(['paid', 'paid', 'paid', 'partial', 'pending']),
-                'notes' => 'Egg tray sale.',
+                'notes' => 'Egg crate sale.',
                 'created_by' => $this->owner->id,
             ]);
         }

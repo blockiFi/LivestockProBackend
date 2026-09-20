@@ -271,6 +271,8 @@ class BatchChatContextService
             .'VOICE / MORTALITY: When the user says birds died, dead birds, mortality, or similar (e.g. "Add 12 dead birds today"), '
             .'call create_mortality_report with mortality_count and date (default today if omitted). Do not only acknowledge in text. '
             .'Explain results clearly; when discussing eggs, you may mention crates of 30 eggs. '
+            .'EGG PRODUCT SALES: For create_product_sale with type=egg, quantity is crates (not individual eggs) '
+            .'and unit_price is the price per crate. Example: "sell 2 crates of eggs at 1500" → quantity=2, unit_price=1500. '
             .'Be concise and practical for tropical poultry farms.';
     }
 

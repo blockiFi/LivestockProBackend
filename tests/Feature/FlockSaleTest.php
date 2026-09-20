@@ -240,8 +240,8 @@ class FlockSaleTest extends TestCase
             'farm_id' => $this->farm->id,
             'flock_id' => $this->flock->id,
             'type' => 'egg',
-            'quantity' => 50,
-            'unit_price' => 40,
+            'quantity' => 2, // crates
+            'unit_price' => 1000,
             'total_amount' => 2000,
             'date' => $date,
             'payment_status' => 'paid',

@@ -8,6 +8,7 @@ use App\Models\FlockExpenditure;
 use App\Models\FlockSale;
 use App\Models\PoultryFlockEggReport;
 use App\Models\SalesRecord;
+use App\Support\EggMetrics;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -173,7 +174,9 @@ class SalesProfitLossService
             $alreadySoldQuery->where('id', '!=', $excludeRecordId);
         }
 
-        $sold = (float) $alreadySoldQuery->sum('quantity');
+        // Egg sales store quantity in crates; convert to eggs for stock math.
+        $soldCrates = (float) $alreadySoldQuery->sum('quantity');
+        $sold = EggMetrics::cratesToEggs($soldCrates);
         $available = max(0, $produced - $broken - $sold);
 
         return [
@@ -186,22 +189,26 @@ class SalesProfitLossService
     }
 
     /**
-     * Validate egg sale quantity against cumulative available stock for the flock.
+     * Validate an egg sale (quantity in crates) against cumulative available stock.
      * Eggs collected on earlier days can be sold later; stock is not limited to the sale date's production.
      *
      * available = collected (on/before sale date) − broken (on/before sale date) − other egg sales (on/before sale date)
      *
+     * @param  float  $quantityInCrates  Sale quantity in crates (not individual eggs).
      * @return array{valid: bool, message?: string, available?: float}
      */
-    public function validateEggSaleQuantity(int $farmId, int $flockId, string $date, float $quantity, ?int $excludeRecordId = null): array
+    public function validateEggSaleQuantity(int $farmId, int $flockId, string $date, float $quantityInCrates, ?int $excludeRecordId = null): array
     {
         $stock = $this->computeEggStock($farmId, $flockId, $date, $excludeRecordId);
         $available = $stock['available'];
+        $eggsRequested = EggMetrics::cratesToEggs($quantityInCrates);
 
-        if ($quantity > $available) {
+        if ($eggsRequested > $available) {
+            $availableCrates = round(EggMetrics::eggsToCrates($available), 2);
+
             return [
                 'valid' => false,
-                'message' => "Cannot sell more eggs than available stock ({$available} available as of {$stock['as_of']}).",
+                'message' => "Cannot sell more eggs than available stock ({$available} eggs / {$availableCrates} crates available as of {$stock['as_of']}).",
                 'available' => $available,
             ];
         }
