@@ -25,9 +25,10 @@ class PoultryMedicationRecordController extends ApiController
             'poultry_medication_inventory_id' => 'required|exists:poultry_medication_inventories,id',
             'date' => 'required|date',
             'administered_by' => 'required|string|max:255',
-            'dosage' => 'required|numeric|min:0',
+            'dosage' => 'required|numeric|min:0.0001',
             'dosage_unit' => 'required|string|max:50',
-            'quantity' => 'required|numeric|min:0',
+            'quantity' => 'nullable|numeric|min:0',
+            'purpose' => 'nullable|string|in:preventive,treatment',
             'notes' => 'nullable|string',
             'administration_method_id' => 'required|exists:administration_methods,id',
         ]);
@@ -48,6 +49,13 @@ class PoultryMedicationRecordController extends ApiController
             return $inactiveResponse;
         }
 
+        // Amount used = dosage; quantity mirrors it for inventory deduction.
+        $amountUsed = round((float) $request->input('dosage'), 4);
+        $amountUnit = (string) $request->input('dosage_unit');
+        $quantity = $request->filled('quantity')
+            ? round((float) $request->input('quantity'), 4)
+            : $amountUsed;
+
         try {
             DB::beginTransaction();
 
@@ -55,16 +63,16 @@ class PoultryMedicationRecordController extends ApiController
             $inventory = PoultryMedicationInventory::findOrFail($request->poultry_medication_inventory_id);
             
             // Check if there's enough quantity in inventory
-            if (!$inventory->hasSufficientQuantity($request->quantity)) {
+            if (!$inventory->hasSufficientQuantity($quantity)) {
                 DB::rollback();
                 return $this->sendError('Insufficient medication quantity in inventory', [
                     'available_quantity' => $inventory->quantity,
-                    'requested_quantity' => $request->quantity
+                    'requested_quantity' => $quantity
                 ], 400);
             }
             
             // Calculate cost based on quantity used and unit cost from inventory
-            $calculatedCost = $request->quantity * $inventory->unit_cost;
+            $calculatedCost = $quantity * $inventory->unit_cost;
 
             $medicationRecord = PoultryMedicationRecord::create([
                 'farm_id' => $request->farm_id,
@@ -73,16 +81,17 @@ class PoultryMedicationRecordController extends ApiController
                 'poultry_medication_inventory_id' => $request->poultry_medication_inventory_id,
                 'date' => $request->date,
                 'administered_by' => $request->administered_by,
-                'dosage' => $request->dosage,
-                'dosage_unit' => $request->dosage_unit,
-                'quantity' => $request->quantity,
+                'dosage' => $amountUsed,
+                'dosage_unit' => $amountUnit,
+                'purpose' => $request->input('purpose'),
+                'quantity' => $quantity,
                 'cost' => $calculatedCost,
                 'notes' => $request->notes,
                 'administration_method_id' => $request->administration_method_id,
             ]);
 
             // Update inventory quantity by subtracting the used quantity
-            $inventory->quantity -= $request->quantity;
+            $inventory->quantity -= $quantity;
             $inventory->updateStatus(); // This will save and update status automatically
 
             // Auto-create flock expenditure record (if cost > 0)
@@ -173,9 +182,10 @@ class PoultryMedicationRecordController extends ApiController
             'poultry_medication_inventory_id' => 'sometimes|required|exists:poultry_medication_inventories,id',
             'date' => 'sometimes|required|date',
             'administered_by' => 'sometimes|required|string|max:255',
-            'dosage' => 'sometimes|required|numeric|min:0',
+            'dosage' => 'sometimes|required|numeric|min:0.0001',
             'dosage_unit' => 'sometimes|required|string|max:50',
-            'quantity' => 'sometimes|required|numeric|min:0',
+            'quantity' => 'sometimes|nullable|numeric|min:0',
+            'purpose' => 'nullable|string|in:preventive,treatment',
             'notes' => 'nullable|string',
             'administration_method_id' => 'sometimes|required|exists:administration_methods,id',
         ]);
@@ -208,15 +218,23 @@ class PoultryMedicationRecordController extends ApiController
                 'administered_by',
                 'dosage',
                 'dosage_unit',
+                'purpose',
                 'quantity',
                 'notes',
                 'administration_method_id',
             ]);
 
+            // Keep amount used and inventory quantity in sync when amount is provided.
+            if ($request->has('dosage') && ! $request->has('quantity')) {
+                $updateData['quantity'] = round((float) $request->input('dosage'), 4);
+            } elseif ($request->has('quantity') && ! $request->has('dosage')) {
+                $updateData['dosage'] = round((float) $request->input('quantity'), 4);
+            }
+
             // If inventory or quantity is being updated, recalculate cost
-            if ($request->has('poultry_medication_inventory_id') || $request->has('quantity')) {
+            if ($request->has('poultry_medication_inventory_id') || $request->has('quantity') || $request->has('dosage')) {
                 $inventoryId = $request->poultry_medication_inventory_id ?? $medicationRecord->poultry_medication_inventory_id;
-                $quantity = $request->quantity ?? $medicationRecord->quantity;
+                $quantity = $updateData['quantity'] ?? $medicationRecord->quantity;
                 
                 $inventory = PoultryMedicationInventory::findOrFail($inventoryId);
                 $updateData['cost'] = $quantity * $inventory->unit_cost;

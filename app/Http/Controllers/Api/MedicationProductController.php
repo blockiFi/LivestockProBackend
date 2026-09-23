@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\ApiController;
 use App\Models\Farm;
 use App\Models\MedicationProduct;
 use App\Models\PoultryMedication;
+use App\Support\MedicationDosage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -13,18 +14,46 @@ use Illuminate\Validation\Rule;
 class MedicationProductController extends ApiController
 {
     /**
-     * Display a listing of medication products.
+     * @return array<string, string>
      */
+    private function dosageRatioRules(): array
+    {
+        $rules = [];
+        foreach (['preventive', 'treatment'] as $prefix) {
+            $rules["{$prefix}_medicine_amount"] = 'nullable|numeric|min:0';
+            $rules["{$prefix}_medicine_unit"] = 'nullable|string|max:50';
+            $rules["{$prefix}_diluent_amount"] = 'nullable|numeric|min:0';
+            $rules["{$prefix}_diluent_unit"] = 'nullable|string|max:50';
+            $rules["{$prefix}_diluent_type"] = 'nullable|string|in:water,feed,other';
+            $rules["{$prefix}_diluent_label"] = 'nullable|string|max:100';
+        }
+
+        return $rules;
+    }
+
+    /**
+     * @return array<string, list<string>>|null
+     */
+    private function dosageBlockErrors(array $data): ?array
+    {
+        $errors = array_merge(
+            MedicationDosage::validateBlock($data, 'preventive'),
+            MedicationDosage::validateBlock($data, 'treatment')
+        );
+
+        return $errors === [] ? null : $errors;
+    }
+
     public function index(Request $request, $farm)
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
 
-        if (!$user->hasPermissionTo('view medication products', 'api', $farm)) {
+        if (! $user->hasPermissionTo('view medication products', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to view medication products');
         }
 
-        $query = MedicationProduct::where(function($q) use ($farm) {
+        $query = MedicationProduct::where(function ($q) use ($farm) {
             $q->where('farm_id', $farm->id)
               ->orWhereNull('farm_id');
         });
@@ -36,11 +65,11 @@ class MedicationProductController extends ApiController
             $query->where('type', $request->type);
         }
         if ($request->has('manufacturer')) {
-            $query->where('manufacturer', 'like', '%' . $request->manufacturer . '%');
+            $query->where('manufacturer', 'like', '%'.$request->manufacturer.'%');
         }
         if ($request->has('search')) {
             $search = $request->search;
-            $query->where(function($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('manufacturer', 'like', "%{$search}%");
             });
@@ -49,33 +78,27 @@ class MedicationProductController extends ApiController
         $sortDirection = $request->input('sort_direction', 'asc');
         $query->orderBy($sortField, $sortDirection);
         $query->with(['farm']);
-        
-        // Check if pagination is requested (properly handle string "false")
+
         $paginated = filter_var($request->input('paginated', false), FILTER_VALIDATE_BOOLEAN);
-        
+
         if ($paginated) {
-            // Paginate results
             $perPage = $request->input('per_page', 10);
             $products = $query->paginate($perPage);
         } else {
-            // Return all results without pagination
             $products = $query->get();
         }
-        
+
         return $this->sendResponse($products, 'Medication products retrieved successfully');
     }
 
-    /**
-     * Store a newly created medication product.
-     */
     public function store(Request $request, $farm)
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('create medication products', 'api', $farm)) {
+        if (! $user->hasPermissionTo('create medication products', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to create medication products');
         }
-        $validator = Validator::make($request->all(), [
+        $validator = Validator::make($request->all(), array_merge([
             'poultry_medication_id' => 'required|exists:poultry_medications,id',
             'name' => [
                 'required',
@@ -91,48 +114,60 @@ class MedicationProductController extends ApiController
             'dosage_unit' => 'nullable|string|max:50',
             'image_url' => 'nullable|url',
             'min_stock_level' => 'nullable|integer|min:0',
-            
-        ]);
+        ], $this->dosageRatioRules()));
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+        if ($blockErrors = $this->dosageBlockErrors($request->all())) {
+            return $this->sendValidationError('Validation failed', $blockErrors);
         }
         $medication = PoultryMedication::findOrFail($request->poultry_medication_id);
         if ($medication->farm_id !== null && $medication->farm_id !== $farm->id) {
             return $this->sendError('Medication not found in this farm', [], 404);
         }
-        $product = MedicationProduct::create(array_merge($request->all(), [
+
+        $payload = MedicationDosage::syncLegacyDosage($request->only(array_merge([
+            'poultry_medication_id',
+            'name',
+            'manufacturer',
+            'administration_method_id',
+            'withdrawal_period',
+            'withdrawal_period_unit',
+            'dosage',
+            'dosage_unit',
+            'image_url',
+            'min_stock_level',
+        ], MedicationDosage::fieldNames())));
+
+        $product = MedicationProduct::create(array_merge($payload, [
             'farm_id' => $farm->id,
-            'type' => 'user'
+            'type' => 'user',
         ]));
         $product->load(['farm']);
+
         return $this->sendResponse($product, 'Medication product created successfully', 201);
     }
 
-    /**
-     * Display the specified medication product.
-     */
     public function show(Request $request, $farm, MedicationProduct $product)
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('view medication products', 'api', $farm)) {
+        if (! $user->hasPermissionTo('view medication products', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to view medication products');
         }
         if ($product->farm_id !== null && $product->farm_id !== $farm->id) {
             return $this->sendNotFoundError('Medication product not found in this farm');
         }
         $product->load(['farm']);
+
         return $this->sendResponse($product, 'Medication product retrieved successfully');
     }
 
-    /**
-     * Update the specified medication product.
-     */
     public function update(Request $request, $farm, MedicationProduct $product)
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('update medication products', 'api', $farm)) {
+        if (! $user->hasPermissionTo('update medication products', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to update medication products');
         }
         if ($product->farm_id !== $farm->id) {
@@ -141,9 +176,17 @@ class MedicationProductController extends ApiController
         if ($product->type === 'default' && $product->farm_id === null) {
             return $this->sendError('Cannot update default medication products', [], 403);
         }
-        $validator = Validator::make($request->all(), [
+        $validator = Validator::make($request->all(), array_merge([
             'poultry_medication_id' => 'sometimes|required|exists:poultry_medications,id',
-            'name' => ['sometimes', 'required', 'string', 'max:255', Rule::unique('medication_products')->ignore($product->id)],
+            'name' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('medication_products', 'name')
+                    ->ignore($product->id)
+                    ->where(fn ($q) => $q->where('farm_id', $farm->id)),
+            ],
             'manufacturer' => 'sometimes|required|string|max:255',
             'administration_method_id' => 'sometimes|required|exists:administration_methods,id',
             'withdrawal_period' => 'nullable|integer|min:0',
@@ -153,23 +196,39 @@ class MedicationProductController extends ApiController
             'image_url' => 'nullable|url',
             'min_stock_level' => 'nullable|integer|min:0',
             'type' => ['sometimes', 'required', Rule::in(['default', 'user'])],
-        ]);
+        ], $this->dosageRatioRules()));
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
-        $product->update($request->all());
+        if ($blockErrors = $this->dosageBlockErrors($request->all())) {
+            return $this->sendValidationError('Validation failed', $blockErrors);
+        }
+
+        $payload = MedicationDosage::syncLegacyDosage($request->only(array_merge([
+            'poultry_medication_id',
+            'name',
+            'manufacturer',
+            'administration_method_id',
+            'withdrawal_period',
+            'withdrawal_period_unit',
+            'dosage',
+            'dosage_unit',
+            'image_url',
+            'min_stock_level',
+            'type',
+        ], MedicationDosage::fieldNames())));
+
+        $product->update($payload);
         $product->load(['farm']);
+
         return $this->sendResponse($product, 'Medication product updated successfully');
     }
 
-    /**
-     * Remove the specified medication product.
-     */
     public function destroy(Request $request, $farm, MedicationProduct $product)
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('delete medication products', 'api', $farm)) {
+        if (! $user->hasPermissionTo('delete medication products', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to delete medication products');
         }
         if ($product->farm_id !== $farm->id) {
@@ -179,38 +238,37 @@ class MedicationProductController extends ApiController
             return $this->sendError('Cannot delete default medication products', [], 403);
         }
         $product->delete();
+
         return $this->sendResponse(null, 'Medication product deleted successfully');
     }
 
-    /**
-     * Get medication product statistics.
-     */
     public function statistics(Request $request, $farm)
     {
         $user = $request->user();
         $farm = Farm::findOrFail($farm);
-        if (!$user->hasPermissionTo('view medication products', 'api', $farm)) {
+        if (! $user->hasPermissionTo('view medication products', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to view medication products');
         }
-        $query = MedicationProduct::where(function($q) use ($farm) {
+        $query = MedicationProduct::where(function ($q) use ($farm) {
             $q->where('farm_id', $farm->id)
               ->orWhereNull('farm_id');
         });
         $statistics = [
             'total_products' => $query->count(),
             'by_type' => $query->selectRaw('type, count(*) as count')
-                             ->groupBy('type')
-                             ->get(),
+                ->groupBy('type')
+                ->get(),
             'by_manufacturer' => $query->selectRaw('manufacturer, count(*) as count')
-                                    ->groupBy('manufacturer')
-                                    ->orderBy('count', 'desc')
-                                    ->limit(10)
-                                    ->get(),
+                ->groupBy('manufacturer')
+                ->orderBy('count', 'desc')
+                ->limit(10)
+                ->get(),
             'by_medication' => $query->selectRaw('poultry_medication_id, count(*) as count')
-                                ->groupBy('poultry_medication_id')
-                                ->with('medication:id,name')
-                                ->get(),
+                ->groupBy('poultry_medication_id')
+                ->with('medication:id,name')
+                ->get(),
         ];
+
         return $this->sendResponse($statistics, 'Medication product statistics retrieved successfully');
     }
 }

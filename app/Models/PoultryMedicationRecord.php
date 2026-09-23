@@ -24,6 +24,7 @@ class PoultryMedicationRecord extends Model
         'administered_by',
         'dosage',
         'dosage_unit',
+        'purpose',
         'quantity',
         'cost',
         'notes',
@@ -37,8 +38,8 @@ class PoultryMedicationRecord extends Model
      */
     protected $casts = [
         'date' => 'date',
-        'dosage' => 'integer',
-        'quantity' => 'decimal:2',
+        'dosage' => 'decimal:4',
+        'quantity' => 'decimal:4',
         'cost' => 'decimal:2',
     ];
 
