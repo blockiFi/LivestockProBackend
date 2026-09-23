@@ -26,7 +26,7 @@ class PoultryMedication extends Model
 
     public function products(): HasMany
     {
-        return $this->hasMany(MedicationProduct::class);
+        return $this->hasMany(MedicationProduct::class, 'poultry_medication_id');
     }
 
     public function medicationRecords(): HasMany

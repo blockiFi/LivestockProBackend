@@ -13,7 +13,7 @@ class MedicationProductSeeder extends Seeder
         $methods = \App\Models\AdministrationMethod::pluck('id')->all();
         foreach ($medications as $medication) {
             MedicationProduct::create([
-                'farm_id' => $medication->farm_id ?? 1,
+                'farm_id' => null, // platform default — visible to all farms
                 'type' => 'default',
                 'poultry_medication_id' => $medication->id,
                 'name' => $medication->name . ' Product',

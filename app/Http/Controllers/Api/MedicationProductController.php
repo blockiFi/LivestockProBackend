@@ -77,7 +77,12 @@ class MedicationProductController extends ApiController
         }
         $validator = Validator::make($request->all(), [
             'poultry_medication_id' => 'required|exists:poultry_medications,id',
-            'name' => 'required|string|max:255|unique:medication_products,name',
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('medication_products', 'name')->where(fn ($q) => $q->where('farm_id', $farm->id)),
+            ],
             'manufacturer' => 'required|string|max:255',
             'administration_method_id' => 'required|exists:administration_methods,id',
             'withdrawal_period' => 'nullable|integer|min:0',

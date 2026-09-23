@@ -57,13 +57,16 @@ class PoultryMedicationController extends ApiController
         if (!$user->hasPermissionTo('view medications', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to view medications');
         }
-        $query = PoultryMedication::with(['products' => function($q) use ($request) {
-                // Optionally eager-load inventories if requested
-                
-                    $q->with('inventories');
-                
-            }])
-            ->where(function($q) use ($farm) {
+        $query = PoultryMedication::with([
+            'products' => function ($q) use ($farm) {
+                $q->where(function ($inner) use ($farm) {
+                    $inner->where('farm_id', $farm->id)->orWhereNull('farm_id');
+                })->with([
+                    'inventories' => fn ($iq) => $iq->where('farm_id', $farm->id),
+                ]);
+            },
+        ])
+            ->where(function ($q) use ($farm) {
                 $q->where('farm_id', $farm->id)
                   ->orWhereNull('farm_id');
             });
