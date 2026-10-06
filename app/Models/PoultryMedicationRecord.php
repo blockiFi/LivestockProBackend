@@ -123,7 +123,7 @@ class PoultryMedicationRecord extends Model
     public function getMedicationHistory($flockId)
     {
         return static::where('flock_id', $flockId)
-            ->with(['medication', 'administrationMethod'])
+            ->with(['medication', 'medicationInventory.product', 'administrationMethod'])
             ->orderBy('date', 'desc')
             ->get();
     }

@@ -441,11 +441,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [PoultryMedicationController::class, 'index']);
         Route::get('/paginated', [PoultryMedicationController::class, 'index'])->defaults('paginated', true);
         Route::get('/data', [PoultryMedicationController::class, 'data']);
+        Route::get('/statistics', [PoultryMedicationController::class, 'statistics']);
         Route::post('/', [PoultryMedicationController::class, 'store']);
         Route::get('/{medication}', [PoultryMedicationController::class, 'show']);
         Route::put('/{medication}', [PoultryMedicationController::class, 'update']);
         Route::delete('/{medication}', [PoultryMedicationController::class, 'destroy']);
-        Route::get('/statistics', [PoultryMedicationController::class, 'statistics']);
     });
 
     // Administration Methods (global, not farm-specific)

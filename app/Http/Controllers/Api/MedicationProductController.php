@@ -170,7 +170,7 @@ class MedicationProductController extends ApiController
         if (! $user->hasPermissionTo('update medication products', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to update medication products');
         }
-        if ($product->farm_id !== $farm->id) {
+        if ($product->farm_id === null || (int) $product->farm_id !== (int) $farm->id) {
             return $this->sendNotFoundError('Medication product not found in this farm');
         }
         if ($product->type === 'default' && $product->farm_id === null) {
@@ -231,11 +231,14 @@ class MedicationProductController extends ApiController
         if (! $user->hasPermissionTo('delete medication products', 'api', $farm)) {
             return $this->sendUnauthorizedError('Unauthorized to delete medication products');
         }
-        if ($product->farm_id !== $farm->id) {
+        if ($product->farm_id === null || (int) $product->farm_id !== (int) $farm->id) {
             return $this->sendNotFoundError('Medication product not found in this farm');
         }
         if ($product->type === 'default' && $product->farm_id === null) {
             return $this->sendError('Cannot delete default medication products', [], 403);
+        }
+        if ($product->inventories()->whereHas('medicationRecords')->exists()) {
+            return $this->sendError('This product has been used in medication records and cannot be deleted', [], 422);
         }
         $product->delete();
 

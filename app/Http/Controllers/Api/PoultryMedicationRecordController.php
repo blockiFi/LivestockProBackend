@@ -59,9 +59,25 @@ class PoultryMedicationRecordController extends ApiController
         try {
             DB::beginTransaction();
 
-            // Get the medication inventory to calculate cost
-            $inventory = PoultryMedicationInventory::findOrFail($request->poultry_medication_inventory_id);
-            
+            $inventory = PoultryMedicationInventory::with('product')
+                ->where('farm_id', $farm->id)
+                ->find($request->poultry_medication_inventory_id);
+
+            if (!$inventory) {
+                DB::rollback();
+                return $this->sendValidationError('Validation failed', [
+                    'poultry_medication_inventory_id' => ['This inventory batch does not belong to this farm.'],
+                ]);
+            }
+
+            if ($inventory->product
+                && (int) $inventory->product->poultry_medication_id !== (int) $request->poultry_medication_id) {
+                DB::rollback();
+                return $this->sendValidationError('Validation failed', [
+                    'poultry_medication_inventory_id' => ['This inventory batch is not for the selected medication type.'],
+                ]);
+            }
+
             // Check if there's enough quantity in inventory
             if (!$inventory->hasSufficientQuantity($quantity)) {
                 DB::rollback();
@@ -100,7 +116,7 @@ class PoultryMedicationRecordController extends ApiController
             // Load relationships
             $medicationRecord->load([
                 'medication',
-                'medicationInventory',
+                'medicationInventory.product',
                 'administrationMethod'
             ]);
 
@@ -127,7 +143,7 @@ class PoultryMedicationRecordController extends ApiController
 
         $query = PoultryMedicationRecord::with([
             'medication',
-            'medicationInventory',
+            'medicationInventory.product',
             'administrationMethod',
             'flock'
         ])->where('farm_id', $farmId);
@@ -164,7 +180,7 @@ class PoultryMedicationRecordController extends ApiController
 
         $medicationRecord = PoultryMedicationRecord::with([
             'medication',
-            'medicationInventory',
+            'medicationInventory.product',
             'administrationMethod',
             'flock'
         ])->where('farm_id', $farmId)->findOrFail($id);
@@ -248,7 +264,7 @@ class PoultryMedicationRecordController extends ApiController
             // Load relationships
             $medicationRecord->load([
                 'medication',
-                'medicationInventory',
+                'medicationInventory.product',
                 'administrationMethod'
             ]);
 

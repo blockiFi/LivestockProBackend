@@ -304,7 +304,7 @@ class FlockController extends ApiController
             'poultryFeedUsages.feedType',
             'poultryFeedUsages.flock',
             'poultryMedicationRecords.medication',
-            'poultryMedicationRecords.medicationInventory',
+            'poultryMedicationRecords.medicationInventory.product',
             'poultryMedicationRecords.administrationMethod',
             'poultryVaccinationRecords.vaccine',
             'poultryVaccinationRecords.vaccineInventory',
