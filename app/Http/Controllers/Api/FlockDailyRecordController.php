@@ -724,16 +724,11 @@ class FlockDailyRecordController extends ApiController
 
         $feedTypeId = null;
         if ($preferredInventoryId) {
-            $preferred = PoultryFeedInventory::with('feedType')
-                ->where('farm_id', $farmId)
+            $preferred = PoultryFeedInventory::where('farm_id', $farmId)
                 ->where('id', $preferredInventoryId)
                 ->first();
-            if ($preferred) {
-                $matchesPoultryType = $preferred->feedType
-                    && (int) $preferred->feedType->poultry_type_id === (int) $flock->poultry_type_id;
-                if ($matchesPoultryType || $allowPoultryTypeMismatch) {
-                    $feedTypeId = $preferred->poultry_feed_type_id;
-                }
+            if ($preferred && (int) $preferred->poultry_feed_type_id > 0) {
+                $feedTypeId = (int) $preferred->poultry_feed_type_id;
             }
         }
 
@@ -901,7 +896,11 @@ class FlockDailyRecordController extends ApiController
         }
 
         $farmId = $flock->farm_id;
-        $feedTypeId = $scheduleItem->feed_type_id;
+        $feedTypeId = $this->resolveFeedTypeIdForDailyRecordUsage(
+            $farmId,
+            (int) $scheduleItem->feed_type_id,
+            $preferredInventoryId
+        );
 
         if ($feedKg <= 0 || !$feedTypeId || !$farmId) {
             return false;
@@ -913,7 +912,6 @@ class FlockDailyRecordController extends ApiController
             ->first();
 
         if ($existingUsage) {
-            // Only honour preferred inventory when its feed type matches the schedule item.
             $inventoryIdForUpdate = null;
             if ($preferredInventoryId) {
                 $preferred = PoultryFeedInventory::where('farm_id', $farmId)
@@ -930,7 +928,7 @@ class FlockDailyRecordController extends ApiController
 
         $usages = FeedUsageInventoryService::deductFifo(
             $farmId,
-            (int) $feedTypeId,
+            $feedTypeId,
             $feedKg,
             $flock->id,
             $date,
@@ -941,6 +939,30 @@ class FlockDailyRecordController extends ApiController
         );
 
         return !empty($usages);
+    }
+
+    /**
+     * When the user picks a feed inventory batch on the daily record, deduct that
+     * batch's feed type even if the flock feeding schedule expects another type.
+     */
+    protected function resolveFeedTypeIdForDailyRecordUsage(
+        int $farmId,
+        int $scheduleFeedTypeId,
+        ?int $preferredInventoryId
+    ): ?int {
+        if (!$preferredInventoryId) {
+            return $scheduleFeedTypeId > 0 ? $scheduleFeedTypeId : null;
+        }
+
+        $preferred = PoultryFeedInventory::where('farm_id', $farmId)
+            ->where('id', $preferredInventoryId)
+            ->first();
+
+        if ($preferred && (int) $preferred->poultry_feed_type_id > 0) {
+            return (int) $preferred->poultry_feed_type_id;
+        }
+
+        return $scheduleFeedTypeId > 0 ? $scheduleFeedTypeId : null;
     }
 
     /**

@@ -89,7 +89,15 @@ class FeedTypeController extends ApiController
         }
         $validator = Validator::make($request->all(), [
             'poultry_type_id' => 'required|exists:poultry_types,id',
-            'name' => 'required|string|max:255|unique:poultry_feed_types,name',
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('poultry_feed_types', 'name')->where(function ($query) use ($farm, $request) {
+                    return $query->where('farm_id', $farm->id)
+                        ->where('poultry_type_id', $request->poultry_type_id);
+                }),
+            ],
             'description' => 'nullable|string',
             'start_age' => 'required|integer|min:0',
             'end_age' => 'required|integer|min:0|gte:start_age',
@@ -135,7 +143,18 @@ class FeedTypeController extends ApiController
             return $this->sendNotFoundError('Feed type not found in this farm');
         }
         $validator = Validator::make($request->all(), [
-            'name' => ['sometimes', 'required', 'string', 'max:255', Rule::unique('poultry_feed_types')->ignore($feedType->id)],
+            'name' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('poultry_feed_types', 'name')
+                    ->ignore($feedType->id)
+                    ->where(function ($query) use ($farm, $feedType) {
+                        return $query->where('farm_id', $farm->id)
+                            ->where('poultry_type_id', $feedType->poultry_type_id);
+                    }),
+            ],
             'type' => ['sometimes', 'required', Rule::in(['default', 'user'])],
             'description' => 'nullable|string',
             'start_age' => 'sometimes|integer|min:0',

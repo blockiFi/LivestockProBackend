@@ -759,6 +759,86 @@ class FlockDailyRecordAutoCreateTest extends TestCase
         $this->assertEqualsWithDelta(180, (float) $second->fresh()->quantity, 0.01);
     }
 
+    public function test_daily_record_honors_selected_inventory_when_schedule_feed_type_differs(): void
+    {
+        $arrivalDate = now()->subDays(5)->toDateString();
+        $recordDate = now()->toDateString();
+        $this->flock->update([
+            'arrival_date' => $arrivalDate,
+            'arrival_age_days' => 1,
+            'quantity' => 100,
+            'expected_end_date' => null,
+        ]);
+
+        $scheduleFeedType = $this->feedType;
+        $layerChickMash = PoultryFeedType::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'user',
+            'poultry_type_id' => $this->flock->poultry_type_id,
+            'name' => 'Layer Chick Mash ' . $this->farm->id,
+            'description' => 'Young layer mash',
+            'start_age' => 1,
+            'end_age' => 42,
+        ]);
+
+        $chickMashInventory = PoultryFeedInventory::create([
+            'farm_id' => $this->farm->id,
+            'poultry_feed_type_id' => $layerChickMash->id,
+            'quantity' => 400,
+            'unit_cost' => 2.8,
+            'status' => 'available',
+            'batch_number' => 'CHICK-MASH-1',
+        ]);
+
+        $feedingSchedule = FeedingSchedule::create([
+            'title' => 'Layer program',
+            'description' => 'Schedule still on starter type',
+            'start_date' => $arrivalDate,
+            'farm_id' => $this->farm->id,
+            'type' => 'user',
+            'poultry_type_id' => $this->flock->poultry_type_id,
+        ]);
+
+        $scheduleItem = FeedingScheduleItem::create([
+            'feeding_schedule_id' => $feedingSchedule->id,
+            'feed_type_id' => $scheduleFeedType->id,
+            'feeding_times' => [['time' => '08:00', 'percentage' => 100]],
+            'quantity' => 45,
+            'start_day' => 1,
+            'end_day' => 21,
+            'feeding_day' => 1,
+        ]);
+
+        FeedingBatchSchedule::create([
+            'farm_id' => $this->farm->id,
+            'flock_id' => $this->flock->id,
+            'feeding_schedule_id' => $feedingSchedule->id,
+            'status' => 'in_progress',
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/flock-daily-records", [
+                'flock_id' => $this->flock->id,
+                'date' => $recordDate,
+                'feed_consumed_kg' => 18,
+                'poultry_feed_inventory_id' => $chickMashInventory->id,
+            ])
+            ->assertStatus(201);
+
+        $this->assertDatabaseHas('poultry_feed_usages', [
+            'flock_id' => $this->flock->id,
+            'poultry_feed_type_id' => $layerChickMash->id,
+            'poultry_feed_inventory_id' => $chickMashInventory->id,
+            'quantity' => 18,
+        ]);
+
+        $this->assertNotNull(
+            FeedingBatchScheduleItem::where('feeding_schedule_item_id', $scheduleItem->id)
+                ->whereDate('feeding_date', $recordDate)
+                ->first()
+        );
+    }
+
     public function test_daily_record_creates_and_updates_feed_expenditure(): void
     {
         $date = now()->toDateString();
