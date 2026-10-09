@@ -50,8 +50,10 @@ class PoultryMedicationRecordTest extends TestCase
             'view medications',
             'view medication records',
             'create medication records',
+            'update medication records',
             'delete medication records',
             'delete medication products',
+            'manage medication inventory',
         ])->map(fn (string $name) => Permission::firstOrCreate(['name' => $name, 'guard_name' => 'api']));
 
         $ownerRole = Role::create([
@@ -200,6 +202,84 @@ class PoultryMedicationRecordTest extends TestCase
         $this->assertSame($this->product->id, $antibiotics['products'][0]['id']);
         $this->assertCount(1, $antibiotics['products'][0]['inventories']);
         $this->assertSame($this->inventory->id, $antibiotics['products'][0]['inventories'][0]['id']);
+    }
+
+    public function test_inventory_can_be_added_for_a_product_with_no_stock(): void
+    {
+        $newProduct = MedicationProduct::create([
+            'farm_id' => $this->farm->id,
+            'type' => 'user',
+            'poultry_medication_id' => $this->vitamins->id,
+            'name' => 'Vitamin AD3E',
+            'manufacturer' => 'VetPharm',
+            'administration_method_id' => $this->method->id,
+        ]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/medication-inventory", [
+                'medication_product_id' => $newProduct->id,
+                'quantity' => 20,
+                'unit_cost' => 150,
+                'batch_number' => 'VIT-1',
+                'expiry_date' => now()->addYear()->toDateString(),
+                'notes' => 'From Agro Supplies',
+            ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('data.product.id', $newProduct->id);
+
+        $inventory = PoultryMedicationInventory::findOrFail($response->json('data.id'));
+        $this->assertEqualsWithDelta(20, (float) $inventory->quantity, 0.001);
+        $this->assertEqualsWithDelta(20, (float) $inventory->available_quantity, 0.001);
+        $this->assertSame('VetPharm', $inventory->manufacturer);
+        $this->assertSame('From Agro Supplies', $inventory->notes);
+        $this->assertNotNull($inventory->last_restocked);
+    }
+
+    public function test_inventory_cannot_be_added_for_another_farms_product(): void
+    {
+        $otherFarm = Farm::factory()->create();
+        $foreignProduct = MedicationProduct::create([
+            'farm_id' => $otherFarm->id,
+            'type' => 'user',
+            'poultry_medication_id' => $this->antibiotics->id,
+            'name' => 'Foreign Product',
+            'manufacturer' => 'Elsewhere',
+            'administration_method_id' => $this->method->id,
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/medication-inventory", [
+                'medication_product_id' => $foreignProduct->id,
+                'quantity' => 5,
+                'unit_cost' => 10,
+            ])
+            ->assertStatus(403);
+    }
+
+    public function test_usage_keeps_available_quantity_in_sync(): void
+    {
+        $recordId = $this->postRecord()->assertOk()->json('data.id');
+
+        $inventory = $this->inventory->fresh();
+        $this->assertEqualsWithDelta(45, (float) $inventory->quantity, 0.001);
+        $this->assertEqualsWithDelta(45, (float) $inventory->available_quantity, 0.001);
+
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->putJson("/api/farms/{$this->farm->id}/medication-records/{$recordId}", ['dosage' => 8])
+            ->assertOk();
+
+        $inventory = $this->inventory->fresh();
+        $this->assertEqualsWithDelta(42, (float) $inventory->quantity, 0.001);
+        $this->assertEqualsWithDelta(42, (float) $inventory->available_quantity, 0.001);
+
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->deleteJson("/api/farms/{$this->farm->id}/medication-records/{$recordId}")
+            ->assertOk();
+
+        $inventory = $this->inventory->fresh();
+        $this->assertEqualsWithDelta(50, (float) $inventory->quantity, 0.001);
+        $this->assertEqualsWithDelta(50, (float) $inventory->available_quantity, 0.001);
     }
 
     public function test_product_used_in_records_cannot_be_deleted(): void

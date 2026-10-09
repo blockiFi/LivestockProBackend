@@ -249,10 +249,42 @@ class PoultryMedicationRecordController extends ApiController
 
             // If inventory or quantity is being updated, recalculate cost
             if ($request->has('poultry_medication_inventory_id') || $request->has('quantity') || $request->has('dosage')) {
-                $inventoryId = $request->poultry_medication_inventory_id ?? $medicationRecord->poultry_medication_inventory_id;
-                $quantity = $updateData['quantity'] ?? $medicationRecord->quantity;
-                
-                $inventory = PoultryMedicationInventory::findOrFail($inventoryId);
+                $oldInventoryId = (int) $medicationRecord->poultry_medication_inventory_id;
+                $oldQuantity = (float) $medicationRecord->quantity;
+                $inventoryId = (int) ($request->poultry_medication_inventory_id ?? $oldInventoryId);
+                $quantity = (float) ($updateData['quantity'] ?? $oldQuantity);
+
+                $inventory = PoultryMedicationInventory::where('farm_id', $farm->id)
+                    ->lockForUpdate()
+                    ->find($inventoryId);
+                if (! $inventory) {
+                    DB::rollback();
+                    return $this->sendValidationError('Validation failed', [
+                        'poultry_medication_inventory_id' => ['This inventory batch does not belong to this farm.'],
+                    ]);
+                }
+
+                if ($inventoryId === $oldInventoryId) {
+                    $available = (float) $inventory->quantity + $oldQuantity;
+                } else {
+                    $available = (float) $inventory->quantity;
+                    if ($oldInventoryId && ($oldInventory = PoultryMedicationInventory::lockForUpdate()->find($oldInventoryId))) {
+                        $oldInventory->quantity = (float) $oldInventory->quantity + $oldQuantity;
+                        $oldInventory->updateStatus();
+                    }
+                }
+
+                if ($available < $quantity) {
+                    DB::rollback();
+                    return $this->sendError('Insufficient medication quantity in inventory', [
+                        'available_quantity' => $available,
+                        'requested_quantity' => $quantity,
+                    ], 400);
+                }
+
+                $inventory->quantity = $available - $quantity;
+                $inventory->updateStatus();
+
                 $updateData['cost'] = $quantity * $inventory->unit_cost;
             }
 

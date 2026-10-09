@@ -24,6 +24,17 @@ class PoultryMedicationInventory extends Model
         'last_restocked'
     ];
 
+    protected static function booted(): void
+    {
+        // `quantity` is decremented as stock is used, so it is the remaining amount;
+        // keep `available_quantity` equal to it.
+        static::saving(function (self $inventory) {
+            if ($inventory->isDirty('quantity') || ! $inventory->exists) {
+                $inventory->available_quantity = max(0, (float) $inventory->quantity);
+            }
+        });
+    }
+
     public function farm(): BelongsTo
     {
         return $this->belongsTo(Farm::class);

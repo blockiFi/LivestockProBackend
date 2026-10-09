@@ -97,30 +97,37 @@ class MedicationInventoryController extends ApiController
             'manufacture_date' => 'nullable|date',
             'expiry_date' => 'nullable|date|after:manufacture_date',
             'unit_cost' => 'required|numeric|min:0',
+            'manufacturer' => 'nullable|string|max:255',
+            'notes' => 'nullable|string',
         ]);
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
-        if ($request->filled('expiry_date') && \Carbon\Carbon::parse($request->expiry_date)->isPast()) {
+        if ($request->filled('expiry_date') && \Carbon\Carbon::parse($request->expiry_date)->endOfDay()->isPast()) {
             return $this->sendValidationError('Validation failed', [
                 'expiry_date' => ['The Medication is already expired, can\'t add stock.']
             ]);
         }
         $product = MedicationProduct::findOrFail($request->medication_product_id);
-        if ($product->farm_id !== null && $product->farm_id !== $farm->id) {
+        if ($product->farm_id !== null && (int) $product->farm_id !== (int) $farm->id) {
             return $this->sendError('Medication product does not belong to this farm', [], 403);
         }
         try {
             DB::beginTransaction();
-            $status = 'available';
+            $quantity = round((float) $request->quantity, 2);
             $inventory = PoultryMedicationInventory::create([
                 'medication_product_id' => $request->medication_product_id,
                 'farm_id' => $farm->id,
-                'quantity' => $request->quantity,
+                'quantity' => $quantity,
+                'available_quantity' => $quantity,
                 'batch_number' => $request->batch_number,
                 'manufacture_date' => $request->manufacture_date,
                 'expiry_date' => $request->expiry_date,
+                'last_restocked' => now()->toDateString(),
                 'unit_cost' => $request->unit_cost,
+                'manufacturer' => $request->filled('manufacturer') ? $request->manufacturer : $product->manufacturer,
+                'notes' => $request->notes,
+                'status' => $quantity > 0 ? 'available' : 'depleted',
                 'created_by' => auth()->id(),
             ]);
             DB::commit();
