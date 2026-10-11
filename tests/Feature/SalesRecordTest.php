@@ -368,4 +368,41 @@ class SalesRecordTest extends TestCase
 
         $this->assertSoftDeleted('sales_records', ['id' => $record->id]);
     }
+
+    public function test_can_create_sale_with_partial_payment(): void
+    {
+        $response = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/sales-records", [
+                'type' => 'manure',
+                'quantity' => 10,
+                'unit_price' => 500,
+                'date' => now()->toDateString(),
+                'customer_name' => 'Walk-in',
+                'payment_mode' => 'partial',
+                'payment_method' => 'cash',
+                'amount_paid' => 2000,
+            ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('data.payment_status', 'partial')
+            ->assertJsonPath('data.payment_method', 'cash');
+
+        $this->assertEquals(5000.0, (float) $response->json('data.total_amount'));
+        $this->assertEquals(2000.0, (float) $response->json('data.amount_paid'));
+    }
+
+    public function test_partial_payment_rejects_amount_equal_to_total(): void
+    {
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/sales-records", [
+                'type' => 'manure',
+                'quantity' => 10,
+                'unit_price' => 500,
+                'date' => now()->toDateString(),
+                'payment_mode' => 'partial',
+                'payment_method' => 'cash',
+                'amount_paid' => 5000,
+            ])
+            ->assertStatus(422);
+    }
 }

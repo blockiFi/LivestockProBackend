@@ -118,7 +118,7 @@ class SalesRecordController extends ApiController
             'customer_phone' => 'nullable|string|max:50',
             'payment_method' => 'nullable|string|max:50',
             'payment_status' => 'nullable|in:pending,paid,partial',
-            'payment_mode' => 'nullable|in:cash,bank_transfer,pos,other,pending,customer_account,account_and_other',
+            'payment_mode' => 'nullable|in:cash,bank_transfer,pos,other,pending,partial,customer_account,account_and_other',
             'account_amount' => 'nullable|numeric|min:0',
             'other_amount' => 'nullable|numeric|min:0',
             'other_payment_method' => 'nullable|in:cash,bank_transfer,pos,other',
@@ -417,6 +417,55 @@ class SalesRecordController extends ApiController
                 'amount_paid' => 0.0,
                 'payment_status' => 'pending',
                 'payment_method' => null,
+                'account_debit' => 0.0,
+                'error' => null,
+            ];
+        }
+
+        if ($mode === 'partial') {
+            $amountPaid = round((float) $request->input('amount_paid', 0), 2);
+            $method = $request->input('payment_method');
+
+            if ($amountPaid <= 0) {
+                return [
+                    'amount_paid' => 0,
+                    'payment_status' => 'pending',
+                    'payment_method' => null,
+                    'account_debit' => 0,
+                    'error' => $this->sendValidationError('Amount paid is required for partial payment.', [
+                        'amount_paid' => ['Enter an amount greater than zero.'],
+                    ]),
+                ];
+            }
+
+            if ($amountPaid >= $total) {
+                return [
+                    'amount_paid' => 0,
+                    'payment_status' => 'pending',
+                    'payment_method' => null,
+                    'account_debit' => 0,
+                    'error' => $this->sendValidationError('Partial payment must be less than the sale total.', [
+                        'amount_paid' => ['Use a full payment method if the full amount was paid.'],
+                    ]),
+                ];
+            }
+
+            if (! $method || ! in_array($method, ['cash', 'bank_transfer', 'pos', 'other'], true)) {
+                return [
+                    'amount_paid' => 0,
+                    'payment_status' => 'pending',
+                    'payment_method' => null,
+                    'account_debit' => 0,
+                    'error' => $this->sendValidationError('Select how the partial amount was paid.', [
+                        'payment_method' => ['Required for partial payment.'],
+                    ]),
+                ];
+            }
+
+            return [
+                'amount_paid' => $amountPaid,
+                'payment_status' => 'partial',
+                'payment_method' => $method,
                 'account_debit' => 0.0,
                 'error' => null,
             ];
