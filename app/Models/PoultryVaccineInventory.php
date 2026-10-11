@@ -20,7 +20,10 @@ class PoultryVaccineInventory extends Model
         'batch_number',
         'manufacture_date',
         'expiry_date',
+        'last_restocked',
         'unit_cost',
+        'manufacturer',
+        'notes',
         'created_by'
     ];
 
@@ -34,7 +37,18 @@ class PoultryVaccineInventory extends Model
 
     // Remove the problematic accessors that convert to strings
     // We need numeric values for arithmetic operations
- 
+
+    protected static function booted(): void
+    {
+        // `quantity` is decremented as stock is used, so it is the remaining amount;
+        // keep `available_quantity` equal to it.
+        static::saving(function (self $inventory) {
+            if ($inventory->isDirty('quantity') || ! $inventory->exists) {
+                $inventory->available_quantity = max(0, (float) $inventory->quantity);
+            }
+        });
+    }
+
     public function farm(): BelongsTo
     {
         return $this->belongsTo(Farm::class);
