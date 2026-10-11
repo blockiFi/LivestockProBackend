@@ -289,6 +289,7 @@ class FlockController extends ApiController
             'dailyRecords' => fn ($query) => $query->orderByDesc('date'),
             'mortalityReports' => fn ($query) => $query->orderByDesc('date'),
             'weightReports.recordedBy:id,name',
+            'weightReports.house:id,name',
             'eggReports.recordedBy:id,name',
             'BatchVaccinationSchedules.schedule',
             'BatchVaccinationSchedules.schedule.items',

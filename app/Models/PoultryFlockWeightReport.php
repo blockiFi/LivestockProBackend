@@ -15,15 +15,57 @@ class PoultryFlockWeightReport extends Model
      *
      * @var array<int, string>
      */
+    public const SOURCE_MANUAL = 'manual';
+    public const SOURCE_AI_IMAGE = 'ai_image';
+    public const SOURCE_AI_FILE = 'ai_file';
+    public const SOURCE_SUMMARY_ONLY = 'summary_only';
+
+    public const DATA_SOURCES = [
+        self::SOURCE_MANUAL,
+        self::SOURCE_AI_IMAGE,
+        self::SOURCE_AI_FILE,
+        self::SOURCE_SUMMARY_ONLY,
+    ];
+
+    public const SEXES = ['mixed', 'male', 'female'];
+
+    public const WEIGHING_METHODS = ['manual_scale', 'hanging_scale', 'platform_auto', 'crate'];
+
+    /** Uniformity from individual weights, from a farm-counted "birds within band", or estimated from min/max. */
+    public const UNIFORMITY_MEASURED = 'measured';
+    public const UNIFORMITY_COUNTED = 'counted';
+    public const UNIFORMITY_ESTIMATED = 'estimated';
+
     protected $fillable = [
         'farm_id',
         'flock_id',
+        'house_id',
+        'pen_label',
+        'sex',
+        'weighing_method',
+        'scale_reference',
         'average_weight',
         'min_weight',
         'max_weight',
         'number_of_birds',
         'sample_size',
         'report_date',
+        'weighed_at_time',
+        'age_days',
+        'target_weight_g',
+        'average_weight_g',
+        'median_weight_g',
+        'std_dev_g',
+        'cv_percent',
+        'uniformity_percent',
+        'uniformity_band_percent',
+        'birds_within_band',
+        'uniformity_method',
+        'deviation_from_target_g',
+        'deviation_from_target_percent',
+        'daily_gain_g',
+        'data_source',
+        'source_file_path',
         'notes',
         'recorded_by',
     ];
@@ -38,7 +80,35 @@ class PoultryFlockWeightReport extends Model
         'average_weight' => 'decimal:2',
         'min_weight' => 'decimal:2',
         'max_weight' => 'decimal:2',
+        'age_days' => 'integer',
+        'target_weight_g' => 'float',
+        'average_weight_g' => 'float',
+        'median_weight_g' => 'float',
+        'std_dev_g' => 'float',
+        'cv_percent' => 'float',
+        'uniformity_percent' => 'float',
+        'uniformity_band_percent' => 'float',
+        'birds_within_band' => 'integer',
+        'deviation_from_target_g' => 'float',
+        'deviation_from_target_percent' => 'float',
+        'daily_gain_g' => 'float',
     ];
+
+    public function samples()
+    {
+        return $this->hasMany(PoultryFlockWeightSample::class, 'weight_report_id')->orderBy('sequence');
+    }
+
+    public function house()
+    {
+        return $this->belongsTo(PoultryHouse::class, 'house_id');
+    }
+
+    public function hasDetailedData(): bool
+    {
+        return ($this->data_source && $this->data_source !== self::SOURCE_SUMMARY_ONLY)
+            || $this->samples()->exists();
+    }
 
     /**
      * Get the flock that owns the weight report.

@@ -496,10 +496,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('farms/{farm}/flock-weight-reports')->group(function () {
         Route::get('/', [FlockWeightReportController::class, 'index']);
         Route::post('/', [FlockWeightReportController::class, 'store']);
+        Route::get('/statistics', [FlockWeightReportController::class, 'statistics']);
+        Route::get('/last-target', [FlockWeightReportController::class, 'lastTarget']);
+        Route::post('/extract', [FlockWeightReportController::class, 'extract'])->middleware('farm.ai');
         Route::get('/{report}', [FlockWeightReportController::class, 'show']);
         Route::put('/{report}', [FlockWeightReportController::class, 'update']);
         Route::delete('/{report}', [FlockWeightReportController::class, 'destroy']);
-        Route::get('/statistics', [FlockWeightReportController::class, 'statistics']);
     });
 
     // Flock Egg Report Routes

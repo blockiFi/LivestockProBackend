@@ -17,6 +17,7 @@ use App\Models\PoultryMortalityReport;
 use App\Services\FeedingDayService;
 use App\Services\FeedingScheduleRangeService;
 use App\Services\FeedUsageInventoryService;
+use App\Services\WeightStatisticsService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -629,6 +630,28 @@ class FlockDailyRecordController extends ApiController
         $birdCount = (int) $flock->actual_quantity;
         $sampleSize = (int) ($normalized['sample_size'] ?? 0);
 
+        // A detailed weigh session (individual samples / AI extraction) is the source of truth for that date.
+        $hasDetailedSession = PoultryFlockWeightReport::where('flock_id', $flock->id)
+            ->whereDate('report_date', $date)
+            ->where(function ($query) {
+                $query->where('data_source', '!=', PoultryFlockWeightReport::SOURCE_SUMMARY_ONLY)
+                    ->orWhereHas('samples');
+            })
+            ->exists();
+
+        if ($hasDetailedSession) {
+            return;
+        }
+
+        // Without both extremes the range is unknown, so uniformity cannot be estimated.
+        $hasRange = $minGrams > 0 && $maxGrams > 0;
+        $uniformity = app(WeightStatisticsService::class)->estimateFromSummary(
+            $avgGrams,
+            $hasRange ? $minGrams : null,
+            $hasRange ? $maxGrams : null,
+            $sampleSize,
+        );
+
         PoultryFlockWeightReport::updateOrCreate(
             [
                 'flock_id' => $flock->id,
@@ -639,8 +662,16 @@ class FlockDailyRecordController extends ApiController
                 'average_weight' => $avgWeightKg,
                 'min_weight' => $minWeightKg,
                 'max_weight' => $maxWeightKg,
+                'average_weight_g' => round($avgGrams, 1),
+                'std_dev_g' => $uniformity['std_dev'],
+                'cv_percent' => $uniformity['cv_percent'],
+                'uniformity_percent' => $uniformity['uniformity_percent'],
+                'uniformity_band_percent' => WeightStatisticsService::DEFAULT_BAND_PERCENT,
+                'birds_within_band' => $uniformity['birds_within_band'],
+                'uniformity_method' => $uniformity['method'],
                 'number_of_birds' => $birdCount,
                 'sample_size' => $sampleSize,
+                'data_source' => PoultryFlockWeightReport::SOURCE_SUMMARY_ONLY,
                 'notes' => self::AUTO_CREATED_NOTE,
                 'recorded_by' => auth()->id(),
             ]
