@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\MedicationQuantity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -21,7 +22,31 @@ class PoultryMedicationInventory extends Model
         'manufacturer',
         'notes',
         'manufacture_date',
-        'last_restocked'
+        'last_restocked',
+        'packs_received',
+        'pack_size_base',
+        'content_unit',
+        'total_content',
+        'depleted_at',
+        'depleted_by',
+        'depletion_reason',
+        'depletion_note',
+        'written_off_quantity',
+        'written_off_value',
+    ];
+
+    protected $casts = [
+        'packs_received' => 'float',
+        'pack_size_base' => 'float',
+        'total_content' => 'float',
+        'written_off_quantity' => 'float',
+        'written_off_value' => 'float',
+        'depleted_at' => 'datetime',
+    ];
+
+    protected $appends = [
+        'remaining_breakdown',
+        'remaining_packs_equivalent',
     ];
 
     protected static function booted(): void
@@ -55,19 +80,72 @@ class PoultryMedicationInventory extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
+    public function depletedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'depleted_by');
+    }
+
+    /** Batches recorded with a pack size store quantities in g, ml or tablet. */
+    public function isUnitAware(): bool
+    {
+        return (bool) $this->content_unit && (float) $this->pack_size_base > 0;
+    }
+
+    /** Cost of an amount (in this batch's stock unit): per pack for unit-aware batches. */
+    public function costOf(float $quantity): float
+    {
+        $unitCost = (float) $this->unit_cost;
+
+        return $this->isUnitAware()
+            ? round($quantity / (float) $this->pack_size_base * $unitCost, 2)
+            : round($quantity * $unitCost, 2);
+    }
+
+    public function getRemainingBreakdownAttribute(): ?string
+    {
+        if (! $this->isUnitAware()) {
+            return null;
+        }
+
+        return MedicationQuantity::breakdown(
+            (float) $this->quantity,
+            (float) $this->pack_size_base,
+            $this->product?->pack_type,
+            $this->content_unit
+        )['label'];
+    }
+
+    /** Level compared with the product's minimum stock: packs for unit-aware batches, raw quantity otherwise. */
+    public function stockLevel(): float
+    {
+        return $this->isUnitAware()
+            ? (float) $this->quantity / (float) $this->pack_size_base
+            : (float) $this->quantity;
+    }
+
+    public function getRemainingPacksEquivalentAttribute(): ?float
+    {
+        return $this->isUnitAware()
+            ? round((float) $this->quantity / (float) $this->pack_size_base, 4)
+            : null;
+    }
+
     /**
      * Update the status based on current quantity
      */
     public function updateStatus()
     {
-        if ($this->quantity <= 0) {
+        $quantity = (float) $this->quantity;
+        if ($quantity <= 0) {
             $this->status = 'depleted';
-        } elseif ($this->quantity <= 10) { // Low stock threshold - can be made configurable
+        } elseif ($this->isUnitAware()) {
+            $this->status = $quantity < (float) $this->total_content ? 'in_use' : 'available';
+        } elseif ($quantity <= 10) {
             $this->status = 'in_use';
         } else {
             $this->status = 'available';
         }
-        
+
         $this->save();
     }
 
@@ -76,6 +154,6 @@ class PoultryMedicationInventory extends Model
      */
     public function hasSufficientQuantity($requiredQuantity)
     {
-        return $this->quantity >= $requiredQuantity;
+        return (float) $this->quantity + 1e-6 >= (float) $requiredQuantity;
     }
 }

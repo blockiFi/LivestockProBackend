@@ -9,7 +9,7 @@ final class MedicationDosage
 {
     public const DILUENT_TYPES = ['water', 'feed', 'other'];
 
-    public const MEDICINE_UNITS = ['g', 'mg', 'ml', 'tablet'];
+    public const MEDICINE_UNITS = ['g', 'mg', 'kg', 'ml', 'L', 'tablet'];
 
     /**
      * @param  array<string, mixed>|object  $source

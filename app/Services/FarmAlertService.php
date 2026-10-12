@@ -118,7 +118,7 @@ class FarmAlertService
                 ->where('farm_id', $farm->id)
                 ->get()
                 ->filter(fn (PoultryMedicationInventory $inv) => $this->isActionableLowStock(
-                    (float) ($inv->quantity ?? 0),
+                    $inv->stockLevel(),
                     $this->resolveMinStockThreshold(optional($inv->product)->min_stock_level),
                     $inv->status,
                     ['closed', 'depleted', 'expired']
@@ -277,7 +277,7 @@ class FarmAlertService
             ->where('farm_id', $farm->id)
             ->get()
             ->filter(fn (PoultryMedicationInventory $inv) => $this->isActionableLowStock(
-                (float) ($inv->quantity ?? 0),
+                $inv->stockLevel(),
                 $this->resolveMinStockThreshold(optional($inv->product)->min_stock_level),
                 $inv->status,
                 ['closed', 'depleted', 'expired']
@@ -291,7 +291,9 @@ class FarmAlertService
                     $qty <= 0 ? 'critical' : 'warning',
                     'low_stock',
                     'Low medication stock: ' . $name,
-                    sprintf('%.2f remaining (status: %s)', $qty, $inv->status ?? 'unknown'),
+                    $inv->isUnitAware()
+                        ? sprintf('%s remaining (status: %s)', $inv->remaining_breakdown, $inv->status ?? 'unknown')
+                        : sprintf('%.2f remaining (status: %s)', $qty, $inv->status ?? 'unknown'),
                     null,
                     null,
                     null,

@@ -431,6 +431,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/alerts', [MedicationInventoryController::class, 'alerts']);
         Route::get('/available-products', [MedicationInventoryController::class, 'availableProducts']);
         Route::post('/bulk-update-status', [MedicationInventoryController::class, 'bulkUpdateStatus']);
+        Route::post('/{inventory}/deplete', [MedicationInventoryController::class, 'deplete']);
         Route::get('/{inventory}', [MedicationInventoryController::class, 'show']);
         Route::put('/{inventory}', [MedicationInventoryController::class, 'update']);
         Route::delete('/{inventory}', [MedicationInventoryController::class, 'destroy']);

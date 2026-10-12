@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use App\Support\MedicationDosage;
+use App\Support\MedicationQuantity;
 
 class MedicationProduct extends Model
 {
@@ -34,9 +35,13 @@ class MedicationProduct extends Model
         'treatment_diluent_unit',
         'treatment_diluent_type',
         'treatment_diluent_label',
+        'pack_type',
+        'pack_size',
+        'pack_size_unit',
     ];
 
     protected $casts = [
+        'pack_size' => 'float',
         'withdrawal_period' => 'integer',
         'dosage' => 'decimal:4',
         'min_stock_level' => 'integer',
@@ -49,7 +54,29 @@ class MedicationProduct extends Model
     protected $appends = [
         'preventive_dosage_label',
         'treatment_dosage_label',
+        'pack_label',
     ];
+
+    public function hasPackSize(): bool
+    {
+        return $this->pack_type && $this->pack_size > 0 && MedicationQuantity::family($this->pack_size_unit) !== null;
+    }
+
+    /** Pack content in the base unit (g, ml or tablet). */
+    public function packSizeBase(): ?float
+    {
+        return $this->hasPackSize() ? MedicationQuantity::toBase((float) $this->pack_size, $this->pack_size_unit) : null;
+    }
+
+    public function getPackLabelAttribute(): ?string
+    {
+        if (! $this->hasPackSize()) {
+            return null;
+        }
+        $noun = $this->pack_type === 'other' ? 'Pack' : ucfirst($this->pack_type);
+
+        return $noun.' of '.MedicationQuantity::formatAmount((float) $this->pack_size, $this->pack_size_unit);
+    }
 
     public function getPreventiveDosageLabelAttribute(): ?string
     {

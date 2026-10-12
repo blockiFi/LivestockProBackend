@@ -7,6 +7,7 @@ use App\Models\Farm;
 use App\Models\MedicationProduct;
 use App\Models\PoultryMedication;
 use App\Support\MedicationDosage;
+use App\Support\MedicationQuantity;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -29,6 +30,22 @@ class MedicationProductController extends ApiController
         }
 
         return $rules;
+    }
+
+    /**
+     * Pack size is how much one sachet/bottle/etc. contains, e.g. 100 g or 1 L.
+     *
+     * @return array<string, mixed>
+     */
+    private function packSizeRules(bool $required): array
+    {
+        $req = $required ? 'required' : 'sometimes|required';
+
+        return [
+            'pack_type' => [$req, Rule::in(MedicationQuantity::PACK_TYPES)],
+            'pack_size' => "{$req}|numeric|gt:0|max:1000000",
+            'pack_size_unit' => [$req, Rule::in(MedicationQuantity::units())],
+        ];
     }
 
     /**
@@ -114,7 +131,7 @@ class MedicationProductController extends ApiController
             'dosage_unit' => 'nullable|string|max:50',
             'image_url' => 'nullable|url',
             'min_stock_level' => 'nullable|integer|min:0',
-        ], $this->dosageRatioRules()));
+        ], $this->dosageRatioRules(), $this->packSizeRules(true)));
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
@@ -137,6 +154,9 @@ class MedicationProductController extends ApiController
             'dosage_unit',
             'image_url',
             'min_stock_level',
+            'pack_type',
+            'pack_size',
+            'pack_size_unit',
         ], MedicationDosage::fieldNames())));
 
         $product = MedicationProduct::create(array_merge($payload, [
@@ -196,7 +216,7 @@ class MedicationProductController extends ApiController
             'image_url' => 'nullable|url',
             'min_stock_level' => 'nullable|integer|min:0',
             'type' => ['sometimes', 'required', Rule::in(['default', 'user'])],
-        ], $this->dosageRatioRules()));
+        ], $this->dosageRatioRules(), $this->packSizeRules(! $product->hasPackSize())));
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
@@ -216,6 +236,9 @@ class MedicationProductController extends ApiController
             'image_url',
             'min_stock_level',
             'type',
+            'pack_type',
+            'pack_size',
+            'pack_size_unit',
         ], MedicationDosage::fieldNames())));
 
         $product->update($payload);

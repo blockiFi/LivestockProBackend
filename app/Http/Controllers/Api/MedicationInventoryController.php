@@ -7,7 +7,9 @@ use App\Models\Farm;
 use App\Models\PoultryMedicationInventory;
 use App\Models\MedicationProduct;
 use App\Models\Country;
+use App\Support\MedicationQuantity;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use Spatie\Permission\PermissionRegistrar;
@@ -34,6 +36,8 @@ class MedicationInventoryController extends ApiController
             ->where('farm_id', $farmId);
         if ($request->has('status')) {
             $query->where('status', $request->status);
+        } elseif (! $request->boolean('include_depleted')) {
+            $query->where('status', '!=', 'depleted');
         }
         if ($request->has('product_id')) {
             $query->where('medication_product_id', $request->product_id);
@@ -56,10 +60,12 @@ class MedicationInventoryController extends ApiController
         }
         if ($request->has('search')) {
             $search = $request->search;
-            $query->whereHas('product', function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('manufacturer', 'like', "%{$search}%");
-            })->orWhere('batch_number', 'like', "%{$search}%");
+            $query->where(function ($outer) use ($search) {
+                $outer->whereHas('product', function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                      ->orWhere('manufacturer', 'like', "%{$search}%");
+                })->orWhere('batch_number', 'like', "%{$search}%");
+            });
         }
         $sortField = $request->input('sort_by', 'created_at');
         $sortDirection = $request->input('sort_direction', 'desc');
@@ -92,7 +98,8 @@ class MedicationInventoryController extends ApiController
         }
         $validator = Validator::make($request->all(), [
             'medication_product_id' => 'required|exists:medication_products,id',
-            'quantity' => 'required|numeric|min:0',
+            'packs_received' => 'required_without:quantity|numeric|gt:0|max:1000000',
+            'quantity' => 'nullable|numeric|gt:0|max:1000000',
             'batch_number' => 'nullable|string|max:255',
             'manufacture_date' => 'nullable|date',
             'expiry_date' => 'nullable|date|after:manufacture_date',
@@ -112,14 +119,26 @@ class MedicationInventoryController extends ApiController
         if ($product->farm_id !== null && (int) $product->farm_id !== (int) $farm->id) {
             return $this->sendError('Medication product does not belong to this farm', [], 403);
         }
+        if (! $product->hasPackSize()) {
+            return $this->sendValidationError('Validation failed', [
+                'medication_product_id' => ['Set the pack size on this product before adding stock.'],
+            ]);
+        }
+        // Older clients send `quantity` as the number of packs.
+        $packs = round((float) ($request->input('packs_received') ?? $request->input('quantity')), 2);
+        $packSizeBase = (float) $product->packSizeBase();
+        $totalContent = round($packs * $packSizeBase, 4);
         try {
             DB::beginTransaction();
-            $quantity = round((float) $request->quantity, 2);
             $inventory = PoultryMedicationInventory::create([
                 'medication_product_id' => $request->medication_product_id,
                 'farm_id' => $farm->id,
-                'quantity' => $quantity,
-                'available_quantity' => $quantity,
+                'packs_received' => $packs,
+                'pack_size_base' => $packSizeBase,
+                'content_unit' => MedicationQuantity::baseUnit($product->pack_size_unit),
+                'total_content' => $totalContent,
+                'quantity' => $totalContent,
+                'available_quantity' => $totalContent,
                 'batch_number' => $request->batch_number,
                 'manufacture_date' => $request->manufacture_date,
                 'expiry_date' => $request->expiry_date,
@@ -127,7 +146,7 @@ class MedicationInventoryController extends ApiController
                 'unit_cost' => $request->unit_cost,
                 'manufacturer' => $request->filled('manufacturer') ? $request->manufacturer : $product->manufacturer,
                 'notes' => $request->notes,
-                'status' => $quantity > 0 ? 'available' : 'depleted',
+                'status' => $totalContent > 0 ? 'available' : 'depleted',
                 'created_by' => auth()->id(),
             ]);
             DB::commit();
@@ -252,14 +271,14 @@ class MedicationInventoryController extends ApiController
         $statistics = [
             'total_items' => $query->count(),
             'total_quantity' => $query->sum('quantity'),
-            'total_value' => $query->sum(DB::raw('quantity * unit_cost')),
+            'total_value' => $query->sum(DB::raw('CASE WHEN pack_size_base > 0 THEN quantity / pack_size_base * unit_cost ELSE quantity * unit_cost END')),
             'by_status' => $query->selectRaw('status, count(*) as count, sum(quantity) as total_quantity')
                                 ->groupBy('status')
                                 ->get(),
             'expired_items' => $query->where('expiry_date', '<', now())->count(),
             'expiring_soon' => $query->where('expiry_date', '<=', now()->addDays(30))->where('expiry_date', '>', now())->count(),
             'low_stock' => $query->where('quantity', '<', 10)->count(),
-            'by_product' => $query->selectRaw('medication_product_id, sum(quantity) as total_quantity, sum(quantity * unit_cost) as total_value')
+            'by_product' => $query->selectRaw('medication_product_id, sum(quantity) as total_quantity, sum(CASE WHEN pack_size_base > 0 THEN quantity / pack_size_base * unit_cost ELSE quantity * unit_cost END) as total_value')
                                 ->groupBy('medication_product_id')
                                 ->with('product:id,name')
                                 ->get(),
@@ -316,6 +335,65 @@ class MedicationInventoryController extends ApiController
             })
             ->get();
         return $this->sendResponse($products, 'Available medication products retrieved successfully');
+    }
+
+    /**
+     * Write off whatever is left in a batch (wasted, expired, ...). Logs the amount and value only;
+     * no expense entry is created.
+     */
+    public function deplete(Request $request, $farmId, $id)
+    {
+        $farm = Farm::findOrFail($farmId);
+        app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+        if (!auth()->user()->can('manage medication inventory', 'api', $farm->id)) {
+            return $this->sendError('You do not have permission to manage medication inventory', [], 403);
+        }
+        $validator = Validator::make($request->all(), [
+            'reason' => ['required', Rule::in(MedicationQuantity::DEPLETION_REASONS)],
+            'note' => 'nullable|string|max:500',
+        ]);
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        $inventory = DB::transaction(function () use ($farm, $id, $request) {
+            $inventory = PoultryMedicationInventory::where('farm_id', $farm->id)
+                ->lockForUpdate()
+                ->find($id);
+            if (! $inventory) {
+                return null;
+            }
+            if ($inventory->status === 'depleted' && (float) $inventory->quantity <= 0) {
+                return false;
+            }
+
+            $remaining = max(0, (float) $inventory->quantity);
+            $inventory->fill([
+                'written_off_quantity' => $remaining,
+                'written_off_value' => $inventory->costOf($remaining),
+                'quantity' => 0,
+                'status' => 'depleted',
+                'depleted_at' => now(),
+                'depleted_by' => auth()->id(),
+                'depletion_reason' => $request->reason,
+                'depletion_note' => $request->note,
+            ])->save();
+
+            return $inventory;
+        });
+
+        if ($inventory === null) {
+            return $this->sendNotFoundError('Medication inventory not found in this farm');
+        }
+        if ($inventory === false) {
+            return $this->sendValidationError('Validation failed', [
+                'inventory' => ['This batch is already depleted.'],
+            ]);
+        }
+
+        $inventory->load(['product', 'createdBy', 'depletedBy']);
+
+        return $this->sendResponse($inventory, 'Batch marked as depleted');
     }
 
     /**

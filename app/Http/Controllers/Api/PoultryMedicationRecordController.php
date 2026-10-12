@@ -7,12 +7,34 @@ use App\Models\PoultryMedicationInventory;
 use App\Models\Farm;
 use App\Models\Flock;
 use App\Models\FlockExpenditure;
+use App\Support\MedicationQuantity;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 
 class PoultryMedicationRecordController extends ApiController
 {
+    /**
+     * Amount to deduct from a batch, in the batch's stock unit.
+     *
+     * @return array{0: float, 1: ?string} [quantity, unit error]
+     */
+    private function deductionFor(PoultryMedicationInventory $inventory, float $dosage, string $dosageUnit, ?float $legacyQuantity): array
+    {
+        if (! $inventory->isUnitAware()) {
+            return [round($legacyQuantity ?? $dosage, 4), null];
+        }
+
+        $baseUnit = (string) $inventory->content_unit;
+        if (! MedicationQuantity::compatible($dosageUnit, $baseUnit)) {
+            $label = MedicationQuantity::familyUnitsLabel($baseUnit);
+
+            return [0.0, "This product is measured in {$baseUnit}. Enter {$label}."];
+        }
+
+        return [(float) MedicationQuantity::toBase($dosage, $dosageUnit), null];
+    }
+
     /**
      * Store a newly created medication record.
      */
@@ -49,18 +71,15 @@ class PoultryMedicationRecordController extends ApiController
             return $inactiveResponse;
         }
 
-        // Amount used = dosage; quantity mirrors it for inventory deduction.
         $amountUsed = round((float) $request->input('dosage'), 4);
         $amountUnit = (string) $request->input('dosage_unit');
-        $quantity = $request->filled('quantity')
-            ? round((float) $request->input('quantity'), 4)
-            : $amountUsed;
 
         try {
             DB::beginTransaction();
 
             $inventory = PoultryMedicationInventory::with('product')
                 ->where('farm_id', $farm->id)
+                ->lockForUpdate()
                 ->find($request->poultry_medication_inventory_id);
 
             if (!$inventory) {
@@ -78,6 +97,17 @@ class PoultryMedicationRecordController extends ApiController
                 ]);
             }
 
+            [$quantity, $unitError] = $this->deductionFor(
+                $inventory,
+                $amountUsed,
+                $amountUnit,
+                $request->filled('quantity') ? (float) $request->input('quantity') : null
+            );
+            if ($unitError) {
+                DB::rollback();
+                return $this->sendValidationError('Validation failed', ['dosage_unit' => [$unitError]]);
+            }
+
             // Check if there's enough quantity in inventory
             if (!$inventory->hasSufficientQuantity($quantity)) {
                 DB::rollback();
@@ -87,8 +117,7 @@ class PoultryMedicationRecordController extends ApiController
                 ], 400);
             }
             
-            // Calculate cost based on quantity used and unit cost from inventory
-            $calculatedCost = $quantity * $inventory->unit_cost;
+            $calculatedCost = $inventory->costOf($quantity);
 
             $medicationRecord = PoultryMedicationRecord::create([
                 'farm_id' => $request->farm_id,
@@ -106,8 +135,7 @@ class PoultryMedicationRecordController extends ApiController
                 'administration_method_id' => $request->administration_method_id,
             ]);
 
-            // Update inventory quantity by subtracting the used quantity
-            $inventory->quantity -= $quantity;
+            $inventory->quantity = max(0, round((float) $inventory->quantity - $quantity, 4));
             $inventory->updateStatus(); // This will save and update status automatically
 
             // Auto-create flock expenditure record (if cost > 0)
@@ -240,19 +268,13 @@ class PoultryMedicationRecordController extends ApiController
                 'administration_method_id',
             ]);
 
-            // Keep amount used and inventory quantity in sync when amount is provided.
-            if ($request->has('dosage') && ! $request->has('quantity')) {
-                $updateData['quantity'] = round((float) $request->input('dosage'), 4);
-            } elseif ($request->has('quantity') && ! $request->has('dosage')) {
-                $updateData['dosage'] = round((float) $request->input('quantity'), 4);
-            }
-
-            // If inventory or quantity is being updated, recalculate cost
-            if ($request->has('poultry_medication_inventory_id') || $request->has('quantity') || $request->has('dosage')) {
+            if ($request->has('poultry_medication_inventory_id')
+                || $request->has('quantity')
+                || $request->has('dosage')
+                || $request->has('dosage_unit')) {
                 $oldInventoryId = (int) $medicationRecord->poultry_medication_inventory_id;
                 $oldQuantity = (float) $medicationRecord->quantity;
                 $inventoryId = (int) ($request->poultry_medication_inventory_id ?? $oldInventoryId);
-                $quantity = (float) ($updateData['quantity'] ?? $oldQuantity);
 
                 $inventory = PoultryMedicationInventory::where('farm_id', $farm->id)
                     ->lockForUpdate()
@@ -264,6 +286,27 @@ class PoultryMedicationRecordController extends ApiController
                     ]);
                 }
 
+                if ($inventory->isUnitAware()) {
+                    $dosage = round((float) ($request->input('dosage') ?? $medicationRecord->dosage), 4);
+                    $dosageUnit = (string) ($request->input('dosage_unit') ?? $medicationRecord->dosage_unit);
+                    [$quantity, $unitError] = $this->deductionFor($inventory, $dosage, $dosageUnit, null);
+                    if ($unitError) {
+                        DB::rollback();
+                        return $this->sendValidationError('Validation failed', ['dosage_unit' => [$unitError]]);
+                    }
+                    $updateData['dosage'] = $dosage;
+                    $updateData['dosage_unit'] = $dosageUnit;
+                } else {
+                    // Legacy batches: amount used and deducted quantity mirror each other.
+                    if ($request->has('dosage') && ! $request->has('quantity')) {
+                        $updateData['quantity'] = round((float) $request->input('dosage'), 4);
+                    } elseif ($request->has('quantity') && ! $request->has('dosage')) {
+                        $updateData['dosage'] = round((float) $request->input('quantity'), 4);
+                    }
+                    $quantity = (float) ($updateData['quantity'] ?? $oldQuantity);
+                }
+                $updateData['quantity'] = $quantity;
+
                 if ($inventoryId === $oldInventoryId) {
                     $available = (float) $inventory->quantity + $oldQuantity;
                 } else {
@@ -274,7 +317,7 @@ class PoultryMedicationRecordController extends ApiController
                     }
                 }
 
-                if ($available < $quantity) {
+                if ($available + 1e-6 < $quantity) {
                     DB::rollback();
                     return $this->sendError('Insufficient medication quantity in inventory', [
                         'available_quantity' => $available,
@@ -282,10 +325,10 @@ class PoultryMedicationRecordController extends ApiController
                     ], 400);
                 }
 
-                $inventory->quantity = $available - $quantity;
+                $inventory->quantity = max(0, round($available - $quantity, 4));
                 $inventory->updateStatus();
 
-                $updateData['cost'] = $quantity * $inventory->unit_cost;
+                $updateData['cost'] = $inventory->costOf($quantity);
             }
 
             $medicationRecord->update($updateData);
@@ -332,10 +375,11 @@ class PoultryMedicationRecordController extends ApiController
             DB::beginTransaction();
 
             // Get the medication inventory to restore the quantity
-            $inventory = PoultryMedicationInventory::findOrFail($medicationRecord->poultry_medication_inventory_id);
-            
-            // Restore the inventory quantity by adding back the used quantity
-            $inventory->quantity += $medicationRecord->quantity;
+            $inventory = PoultryMedicationInventory::lockForUpdate()
+                ->findOrFail($medicationRecord->poultry_medication_inventory_id);
+
+            // Restore the inventory quantity by adding back the used quantity (stored in the batch's unit)
+            $inventory->quantity = round((float) $inventory->quantity + (float) $medicationRecord->quantity, 4);
             $inventory->updateStatus(); // This will save and update status automatically
 
             // Delete the medication record
