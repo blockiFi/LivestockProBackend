@@ -20,6 +20,7 @@ class PoultryFlockEggReport extends Model
         'flock_id',
         'eggs_collected',
         'eggs_broken',
+        'entry_mode',
         'average_egg_weight',
         'production_percentage',
         'bird_count',
@@ -47,6 +48,14 @@ class PoultryFlockEggReport extends Model
     public function flock()
     {
         return $this->belongsTo(Flock::class);
+    }
+
+    /**
+     * Collection rounds for this day. When present, the report totals are their sum.
+     */
+    public function collections()
+    {
+        return $this->hasMany(PoultryFlockEggCollection::class, 'egg_report_id')->orderBy('round_no');
     }
 
     /**

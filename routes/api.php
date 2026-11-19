@@ -25,6 +25,8 @@ use App\Http\Controllers\Api\FeedFormulaAnalysisController;
 use App\Http\Controllers\Api\FeedUsageController;
 use App\Http\Controllers\Api\FlockWeightReportController;
 use App\Http\Controllers\Api\FlockEggReportController;
+use App\Http\Controllers\Api\FlockEggCollectionController;
+use App\Http\Controllers\Api\PoultryHouseEggLayoutController;
 use App\Http\Controllers\Api\FlockMortalityReportController;
 use App\Http\Controllers\Api\FeedingScheduleController;
 use App\Http\Controllers\Api\FeedingScheduleItemController;
@@ -326,6 +328,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{farm}/{poultryHouse}/capacity-rules', [PoultryHouseController::class, 'capacityRules']);
         Route::put('/{farm}/{poultryHouse}/capacity-rules', [PoultryHouseController::class, 'updateCapacityRules']);
         Route::get('/{farm}/{poultryHouse}/allowed-capacity', [PoultryHouseController::class, 'allowedCapacity']);
+
+        // Cell-based egg collection layout (rows A, B... with cells A1, A2...)
+        Route::get('/{farm}/{poultryHouse}/egg-layout', [PoultryHouseEggLayoutController::class, 'show']);
+        Route::put('/{farm}/{poultryHouse}/egg-layout/settings', [PoultryHouseEggLayoutController::class, 'updateSettings']);
+        Route::post('/{farm}/{poultryHouse}/egg-layout/generate', [PoultryHouseEggLayoutController::class, 'generate']);
+        Route::post('/{farm}/{poultryHouse}/egg-layout/rows', [PoultryHouseEggLayoutController::class, 'storeRow']);
+        Route::put('/{farm}/{poultryHouse}/egg-layout/rows/{row}', [PoultryHouseEggLayoutController::class, 'updateRow']);
+        Route::delete('/{farm}/{poultryHouse}/egg-layout/rows/{row}', [PoultryHouseEggLayoutController::class, 'destroyRow']);
+        Route::put('/{farm}/{poultryHouse}/egg-layout/cells', [PoultryHouseEggLayoutController::class, 'updateCells']);
+        Route::post('/{farm}/{poultryHouse}/egg-layout/assign', [PoultryHouseEggLayoutController::class, 'assign']);
     });
 
     // Permission Management Routes
@@ -503,6 +515,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{report}', [FlockWeightReportController::class, 'show']);
         Route::put('/{report}', [FlockWeightReportController::class, 'update']);
         Route::delete('/{report}', [FlockWeightReportController::class, 'destroy']);
+    });
+
+    // Flock egg collection rounds (total or per-cell), which add up to the daily egg report
+    Route::prefix('farms/{farm}/flocks/{flock}')->group(function () {
+        Route::get('/egg-sheet', [FlockEggCollectionController::class, 'sheet']);
+        Route::get('/egg-collections', [FlockEggCollectionController::class, 'index']);
+        Route::post('/egg-collections', [FlockEggCollectionController::class, 'store']);
+        Route::put('/egg-collections/{collection}', [FlockEggCollectionController::class, 'update']);
+        Route::delete('/egg-collections/{collection}', [FlockEggCollectionController::class, 'destroy']);
+        Route::get('/egg-cell-performance', [FlockEggCollectionController::class, 'performance']);
     });
 
     // Flock Egg Report Routes

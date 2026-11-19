@@ -24,12 +24,19 @@ class PoultryHouse extends Model
         'last_maintenance_date',
         'liter_type_id',
         'status',
-        'notes'
+        'notes',
+        'egg_collection_mode',
+        'birds_per_cell',
     ];
 
     public function farm(): BelongsTo
     {
         return $this->belongsTo(Farm::class);
+    }
+
+    public function eggRows(): HasMany
+    {
+        return $this->hasMany(PoultryHouseRow::class, 'house_id')->orderBy('sort_order')->orderBy('code');
     }
 
     public function flocks(): HasMany
