@@ -8,6 +8,7 @@ use App\Models\PoultryFlockEggCollection;
 use App\Models\PoultryFlockEggCollectionCell;
 use App\Models\PoultryFlockEggReport;
 use App\Models\PoultryHouseCell;
+use App\Services\EggCollection\CellInsightService;
 use App\Services\EggCollection\EggCollectionService;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
@@ -245,6 +246,76 @@ class FlockEggCollectionController extends ApiController
         })->sortBy(fn ($c) => $c['lay_rate'] ?? 1000)->values();
 
         return $this->sendResponse(['from' => $from, 'to' => $to, 'cells' => $cells], 'Cell performance retrieved successfully');
+    }
+
+    /**
+     * Day-on-day cell analysis: first eggs, cells that went up, down or stopped, silent cells,
+     * more eggs than birds, broken eggs, best and weakest cells, row totals and a trend.
+     */
+    public function insights(Request $request, CellInsightService $insights, $farm, $flock)
+    {
+        [$farm, $flock, $error] = $this->resolve($request, $farm, $flock, 'view flock egg reports');
+        if ($error) {
+            return $error;
+        }
+
+        $data = $this->insightParams($request);
+        if ($data instanceof JsonResponse) {
+            return $data;
+        }
+
+        return $this->sendResponse(
+            $insights->analyse($flock, $data['date'], $data['window'], $data['silent_days']),
+            'Cell insights retrieved successfully'
+        );
+    }
+
+    /** The same analysis read by the AI, with a short summary, concerns and actions. */
+    public function insightsAi(Request $request, CellInsightService $insights, $farm, $flock)
+    {
+        [$farm, $flock, $error] = $this->resolve($request, $farm, $flock, 'view flock egg reports');
+        if ($error) {
+            return $error;
+        }
+
+        $data = $this->insightParams($request);
+        if ($data instanceof JsonResponse) {
+            return $data;
+        }
+
+        $analysis = $insights->analyse($flock, $data['date'], $data['window'], $data['silent_days']);
+        if (empty($analysis['has_data'])) {
+            return $this->sendError('No by-cell collection recorded for this flock on '.$data['date'].'.', [], 422);
+        }
+
+        $ai = $insights->aiSummary($flock, $analysis);
+
+        return $this->sendResponse([
+            'date' => $analysis['date'],
+            'previous_date' => $analysis['previous_date'],
+            'ai_available' => $ai !== null,
+            'ai_insights' => $ai['insights'] ?? null,
+            'ai_text' => $ai['text'] ?? null,
+        ], 'Cell AI insights retrieved successfully');
+    }
+
+    /** @return array{date: string, window: int, silent_days: int}|JsonResponse */
+    private function insightParams(Request $request): array|JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'date' => 'nullable|date',
+            'window' => 'nullable|integer|min:2|max:30',
+            'silent_days' => 'nullable|integer|min:2|max:30',
+        ]);
+        if ($validator->fails()) {
+            return $this->sendValidationError("Validation error", $validator->errors()->toArray());
+        }
+
+        return [
+            'date' => $request->input('date', now()->toDateString()),
+            'window' => (int) $request->input('window', 7),
+            'silent_days' => (int) $request->input('silent_days', 3),
+        ];
     }
 
     private function rules(bool $creating): array
