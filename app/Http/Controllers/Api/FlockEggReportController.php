@@ -20,6 +20,7 @@ class FlockEggReportController extends ApiController
         }
 
         $query = PoultryFlockEggReport::with('recordedBy:id,name')
+            ->withCount('collections')
             ->where('farm_id', $farm->id);
 
         if ($request->has('flock_id')) {
@@ -146,6 +147,30 @@ class FlockEggReportController extends ApiController
 
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
+        }
+
+        // A report made of collection rounds gets its totals from those rounds.
+        if ($report->collections()->exists()) {
+            $changesTotals = collect(['flock_id', 'date', 'eggs_collected', 'eggs_broken', 'average_egg_weight'])
+                ->contains(function ($field) use ($request, $report) {
+                    if (! $request->has($field)) {
+                        return false;
+                    }
+                    $current = $field === 'date' ? $report->date?->toDateString() : $report->{$field};
+
+                    return (string) $request->input($field) !== (string) $current
+                        && ! ($field === 'average_egg_weight' && (float) $request->input($field) === (float) $current);
+                });
+            if ($changesTotals) {
+                return $this->sendValidationError('Validation failed', [
+                    'eggs_collected' => ['This day is recorded in collection rounds. Edit the rounds instead.'],
+                ]);
+            }
+
+            $report->update(['notes' => $request->has('notes') ? $request->input('notes') : $report->notes]);
+            $report->load('recordedBy:id,name');
+
+            return $this->sendResponse($report->fresh(), 'Flock egg report updated successfully');
         }
 
         $flock = Flock::findOrFail($request->input('flock_id', $report->flock_id));

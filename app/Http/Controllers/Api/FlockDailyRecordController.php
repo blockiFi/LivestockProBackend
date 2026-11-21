@@ -396,6 +396,8 @@ class FlockDailyRecordController extends ApiController
             ->where('flock_id', $flockId)
             ->whereDate('date', $date)
             ->where('notes', 'like', self::AUTO_CREATED_NOTE . '%')
+            // Reports with collection rounds are owned by egg collection, not the daily record.
+            ->whereDoesntHave('collections')
             ->delete();
 
         $feedingBatchSchedule = FeedingBatchSchedule::where('flock_id', $flockId)->first();
@@ -691,6 +693,16 @@ class FlockDailyRecordController extends ApiController
         $flock->loadMissing('poultryType');
         $typeName = strtolower(trim($flock->poultryType?->name ?? ''));
         if ($typeName === '' || $typeName === 'broiler') {
+            return;
+        }
+
+        // Once a day's eggs are recorded as collection rounds (total or per cell), those rounds
+        // own the report; the daily record must not overwrite them.
+        $roundManaged = PoultryFlockEggReport::where('flock_id', $flock->id)
+            ->whereDate('date', $date)
+            ->whereHas('collections')
+            ->exists();
+        if ($roundManaged) {
             return;
         }
 
