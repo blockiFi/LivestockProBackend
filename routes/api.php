@@ -527,6 +527,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/egg-cell-performance', [FlockEggCollectionController::class, 'performance']);
         Route::get('/egg-cell-insights', [FlockEggCollectionController::class, 'insights']);
         Route::post('/egg-cell-insights/ai', [FlockEggCollectionController::class, 'insightsAi'])->middleware('farm.ai');
+        Route::post('/egg-cell-insights/chat', [FlockEggCollectionController::class, 'insightsChat'])->middleware('farm.ai');
     });
 
     // Flock Egg Report Routes
