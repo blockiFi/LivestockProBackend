@@ -299,6 +299,45 @@ class FlockEggCollectionController extends ApiController
         ], 'Cell AI insights retrieved successfully');
     }
 
+    /** Chat about the flock's cell egg collection on a day. The client keeps the conversation. */
+    public function insightsChat(Request $request, CellInsightService $insights, $farm, $flock)
+    {
+        [$farm, $flock, $error] = $this->resolve($request, $farm, $flock, 'view flock egg reports');
+        if ($error) {
+            return $error;
+        }
+
+        $validator = Validator::make($request->all(), [
+            'messages' => 'required|array|min:1|max:40',
+            'messages.*.role' => 'required|in:user,assistant',
+            'messages.*.content' => 'required|string|max:4000',
+        ]);
+        if ($validator->fails()) {
+            return $this->sendValidationError('Validation error', $validator->errors()->toArray());
+        }
+        $messages = $request->input('messages');
+        if (end($messages)['role'] !== 'user') {
+            return $this->sendValidationError('Validation error', ['messages' => ['The last message must be from the user.']]);
+        }
+
+        $data = $this->insightParams($request);
+        if ($data instanceof JsonResponse) {
+            return $data;
+        }
+
+        $analysis = $insights->analyse($flock, $data['date'], $data['window'], $data['silent_days']);
+        if (empty($analysis['has_data'])) {
+            return $this->sendError('No by-cell collection recorded for this flock on '.$data['date'].'.', [], 422);
+        }
+
+        $reply = $insights->chat($flock, $analysis, $messages);
+
+        return $this->sendResponse([
+            'ai_available' => $reply !== null,
+            'reply' => $reply,
+        ], 'Cell insights chat reply');
+    }
+
     /** @return array{date: string, window: int, silent_days: int}|JsonResponse */
     private function insightParams(Request $request): array|JsonResponse
     {

@@ -295,4 +295,49 @@ class CellInsightTest extends TestCase
             ->api()->postJson($this->insightsUrl('/ai'), ['date' => $this->days(0)])
             ->assertStatus(422);
     }
+
+    public function test_chat_answers_with_the_cell_data_in_context(): void
+    {
+        $this->seedThreeDays();
+        config(['llm.provider' => 'openai', 'llm.openai.api_key' => 'test', 'llm.openai.base_url' => 'https://llm.test']);
+        Http::fake([
+            'llm.test/*' => Http::response(['choices' => [['message' => ['content' => 'A5 went from 4 to 0.']]]]),
+        ]);
+
+        $data = $this->withoutMiddleware(EnsureAiEntitlement::class)
+            ->api()->postJson($this->insightsUrl('/chat'), [
+                'date' => $this->days(0),
+                'messages' => [
+                    ['role' => 'user', 'content' => 'Which cells stopped?'],
+                    ['role' => 'assistant', 'content' => 'A5 stopped.'],
+                    ['role' => 'user', 'content' => 'How many eggs did A5 lay before?'],
+                ],
+            ])->assertOk()->json('data');
+
+        $this->assertTrue($data['ai_available']);
+        $this->assertSame('A5 went from 4 to 0.', $data['reply']);
+
+        Http::assertSent(function ($request) {
+            $messages = $request['messages'];
+            $system = $messages[0]['content'];
+
+            return $messages[0]['role'] === 'system'
+                && count($messages) === 4
+                && end($messages)['content'] === 'How many eggs did A5 lay before?'
+                // Per-cell history (oldest first) is in the context.
+                && str_contains($system, 'house,row,cell,birds,'.$this->days(3).','.$this->days(2).','.$this->days(0))
+                && preg_match('/,A,A5,4,4,4,0(\n|$)/', $system) === 1;
+        });
+    }
+
+    public function test_chat_needs_the_user_to_speak_last(): void
+    {
+        $this->seedThreeDays();
+
+        $this->withoutMiddleware(EnsureAiEntitlement::class)
+            ->api()->postJson($this->insightsUrl('/chat'), [
+                'date' => $this->days(0),
+                'messages' => [['role' => 'assistant', 'content' => 'Hi']],
+            ])->assertStatus(422);
+    }
 }

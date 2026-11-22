@@ -193,6 +193,105 @@ class CellInsightService
             : ['insights' => null, 'text' => trim($raw)];
     }
 
+    /**
+     * Answer a question about the flock's cell egg collection. The model gets the day's analysis plus
+     * every cell's eggs over the last recorded days, so it can answer about any cell, row or trend.
+     *
+     * @param  array<string, mixed>  $analysis  output of analyse()
+     * @param  list<array{role: string, content: string}>  $messages  the conversation so far, user last
+     */
+    public function chat(Flock $flock, array $analysis, array $messages, int $historyDays = 14): ?string
+    {
+        if (empty($analysis['has_data'])) {
+            return null;
+        }
+
+        $context = [
+            'flock' => $flock->name ?? $flock->batch_number,
+            'date' => $analysis['date'],
+            'compared_with' => $analysis['previous_date'],
+            'lay_rate_window_recorded_days' => $analysis['window_days'],
+            'summary' => $analysis['summary'],
+            'rows' => array_map(fn ($r) => array_intersect_key($r, array_flip([
+                'house_name', 'row_code', 'cells', 'birds', 'eggs', 'broken', 'previous_eggs', 'change', 'lay_rate', 'cells_laying', 'up', 'down',
+            ])), $analysis['rows']),
+            'trend' => $analysis['trend'],
+            'cells_by_group' => array_map(
+                fn ($list) => array_map(fn ($c) => trim($c['label'].' '.$c['detail']), array_slice($list, 0, 80)),
+                $analysis['events']
+            ),
+        ];
+
+        $system = 'You are the egg production assistant for a poultry layer farm, answering questions from the farm '
+            .'manager about one flock\'s cell-based egg collection. Cages are in rows lettered A, B, C... and each cell in a '
+            .'row is numbered (A1, A2...). A cell holds a few birds and can lay at most one egg per bird per day. '
+            .'A recorded day is a day with a by-cell collection; on a recorded day a blank cell means 0 eggs. '
+            .'Answer only from the data below. If the data does not answer the question, say so and suggest what to record. '
+            .'Be short and practical, name cells and rows, use plain words, and use short bullet lists (lines starting with "- ") when '
+            .'they help, and no tables or headings. Do not make up numbers. Possible causes to consider: birds coming into lay, moulting, illness, a dead or '
+            .'missing bird, egg eating, feed or water problems, heat, and recording mistakes such as eggs entered in the wrong cell.'
+            .(! empty($analysis['summary']['possibly_incomplete'])
+                ? ' Note: far fewer cells were entered on the selected day than the day before, so that day is probably not fully recorded yet.'
+                : '')
+            ."\n\nANALYSIS FOR THE SELECTED DAY (JSON):\n".json_encode($context, JSON_UNESCAPED_UNICODE)
+            ."\n\nEGGS PER CELL, LAST RECORDED DAYS (CSV, blank = cell's row not tracked yet):\n"
+            .$this->cellHistoryCsv($flock, $analysis['date'], $historyDays);
+
+        $conversation = [['role' => 'system', 'content' => $system]];
+        foreach (array_slice($messages, -12) as $m) {
+            $conversation[] = [
+                'role' => $m['role'] === 'assistant' ? 'assistant' : 'user',
+                'content' => mb_substr((string) $m['content'], 0, 4000),
+            ];
+        }
+
+        $reply = $this->llm->chatWithTools($conversation, [], ['temperature' => 0.3]);
+        if (! $reply || ! $reply['content']) {
+            Log::info('CellInsightService: chat unavailable', ['flock_id' => $flock->id, 'error' => $this->llm->getLastError()]);
+
+            return null;
+        }
+
+        return trim($reply['content']);
+    }
+
+    /** One line per cell: house, row, cell, birds, then eggs on each of the last recorded days (oldest first). */
+    private function cellHistoryCsv(Flock $flock, string $date, int $days): string
+    {
+        $dates = array_slice($this->recordedDates($flock, $date), 0, max(2, min(30, $days)));
+        if (! $dates) {
+            return '';
+        }
+        $eggs = $this->eggsByCellAndDate($flock, $dates);
+        $ordered = array_reverse($dates);
+
+        $rowSince = [];
+        $cells = $this->collections->flockCells($flock);
+        foreach ($cells as $cell) {
+            foreach (array_keys($eggs[$cell->id] ?? []) as $d) {
+                $rowSince[$cell->row_id] = min($rowSince[$cell->row_id] ?? $d, $d);
+            }
+        }
+
+        $lines = ['house,row,cell,birds,'.implode(',', $ordered)];
+        foreach ($cells as $cell) {
+            $since = $rowSince[$cell->row_id] ?? $date;
+            $values = array_map(
+                fn ($d) => ($d >= $since || isset($eggs[$cell->id][$d])) ? (string) ($eggs[$cell->id][$d]['eggs'] ?? 0) : '',
+                $ordered
+            );
+            $lines[] = implode(',', [
+                str_replace(',', ' ', (string) ($cell->row->house->name ?? '')),
+                $cell->row->code,
+                EggCollectionService::cellLabel($cell),
+                $cell->birds,
+                ...$values,
+            ]);
+        }
+
+        return implode("\n", $lines);
+    }
+
     /** Recorded days (with a by-cell round) on or before $date, newest first. */
     private function recordedDates(Flock $flock, string $date): array
     {
