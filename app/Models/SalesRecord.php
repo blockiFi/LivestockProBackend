@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class SalesRecord extends Model
@@ -16,6 +17,7 @@ class SalesRecord extends Model
 
     protected $fillable = [
         'farm_id',
+        'sales_order_id',
         'flock_id',
         'type',
         'quantity',
@@ -45,6 +47,11 @@ class SalesRecord extends Model
         return $this->belongsTo(Farm::class);
     }
 
+    public function salesOrder(): BelongsTo
+    {
+        return $this->belongsTo(SalesOrder::class);
+    }
+
     public function flock(): BelongsTo
     {
         return $this->belongsTo(Flock::class);
@@ -58,5 +65,10 @@ class SalesRecord extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function accountTransactions(): HasMany
+    {
+        return $this->hasMany(CustomerAccountTransaction::class);
     }
 }

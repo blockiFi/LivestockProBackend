@@ -46,6 +46,7 @@ use App\Http\Controllers\Api\PoultryVaccinationRecordController;
 use App\Http\Controllers\Api\FlockExpenditureController;
 use App\Http\Controllers\Api\FlockSaleController;
 use App\Http\Controllers\Api\SalesStatisticsController;
+use App\Http\Controllers\Api\SalesOrderController;
 use App\Http\Controllers\Api\SalesRecordController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\CustomerAccountController;
@@ -288,6 +289,14 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/', [SalesRecordController::class, 'store']);
             Route::put('/{record}', [SalesRecordController::class, 'update']);
             Route::delete('/{record}', [SalesRecordController::class, 'destroy']);
+        });
+
+        Route::prefix('farms/{farm}/sales-orders')->group(function () {
+            Route::get('/egg-stock', [SalesOrderController::class, 'eggStockByFlock']);
+            Route::post('/', [SalesOrderController::class, 'store']);
+            Route::get('/{order}', [SalesOrderController::class, 'show']);
+            Route::put('/{order}', [SalesOrderController::class, 'update']);
+            Route::delete('/{order}', [SalesOrderController::class, 'destroy']);
         });
 
         Route::get('farms/{farm}/customer-accounts/summary', [CustomerAccountController::class, 'farmSummary']);

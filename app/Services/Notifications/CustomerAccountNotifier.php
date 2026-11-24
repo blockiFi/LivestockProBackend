@@ -43,6 +43,43 @@ class CustomerAccountNotifier
         );
     }
 
+    /**
+     * One notification for a multi-batch sale order, whose account payment is
+     * recorded as one debit per line.
+     */
+    public function salesOrderPayment(
+        Farm $farm,
+        Customer $customer,
+        int $orderId,
+        float $amount,
+        CustomerAccount $account,
+        int $dedupeTransactionId
+    ): void {
+        $amountText = number_format($amount, 2);
+        $balance = number_format((float) $account->balance, 2);
+
+        $this->notifications->send(
+            NotificationMessage::make(NotificationType::CUSTOMER_ACCOUNT_PAYMENT)
+                ->farm($farm)
+                ->toFarmMembersWithPermission(...self::RECIPIENT_PERMISSIONS)
+                ->title('Customer account payment')
+                ->body("{$amountText} deducted from {$customer->name}'s account for Sale order #{$orderId}. Remaining: {$balance}.")
+                ->priority(NotificationPriority::NORMAL)
+                ->action('/dashboard/crm/customers/'.$customer->id, 'View customer')
+                ->dedupe('customer_account_payment:'.$dedupeTransactionId)
+                ->with([
+                    'customer_name' => $customer->name,
+                    'amount' => $amountText,
+                    'new_balance' => $balance,
+                    'sales_order_id' => $orderId,
+                ])
+        );
+
+        if ($account->isLowBalance()) {
+            $this->lowBalance($farm, $customer, $account);
+        }
+    }
+
     public function salePayment(
         Farm $farm,
         Customer $customer,

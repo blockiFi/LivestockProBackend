@@ -19,9 +19,9 @@ use InvalidArgumentException;
 class SalesRecordController extends ApiController
 {
     public function __construct(
-        private readonly SalesProfitLossService $profitLossService,
-        private readonly CustomerAccountService $accounts,
-        private readonly CustomerAccountNotifier $accountNotifier,
+        protected readonly SalesProfitLossService $profitLossService,
+        protected readonly CustomerAccountService $accounts,
+        protected readonly CustomerAccountNotifier $accountNotifier,
     ) {
     }
 
@@ -242,6 +242,10 @@ class SalesRecordController extends ApiController
 
         $record = SalesRecord::where('farm_id', $farmId)->findOrFail($recordId);
 
+        if ($record->sales_order_id) {
+            return $this->sendError('This sale covers several batches. Edit or delete it as a whole sale order.', ['sales_order_id' => $record->sales_order_id], 409);
+        }
+
         $validator = Validator::make($request->all(), [
             'type' => 'sometimes|in:egg,meat,manure',
             'flock_id' => 'nullable|exists:flocks,id',
@@ -347,6 +351,10 @@ class SalesRecordController extends ApiController
         }
 
         $record = SalesRecord::where('farm_id', $farmId)->findOrFail($recordId);
+
+        if ($record->sales_order_id) {
+            return $this->sendError('This sale covers several batches. Edit or delete it as a whole sale order.', ['sales_order_id' => $record->sales_order_id], 409);
+        }
         $record->delete();
 
         return $this->sendResponse(null, 'Product sale deleted successfully');

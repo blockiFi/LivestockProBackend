@@ -128,7 +128,10 @@ class SalesProfitLossService
      *
      * @return array{produced: float, broken: float, sold: float, available: float, as_of: string}
      */
-    public function computeEggStock(int $farmId, int $flockId, string $date, ?int $excludeRecordId = null): array
+    /**
+     * @param  int|int[]|null  $excludeRecordId  Sale record id(s) to leave out, e.g. the lines of an order being edited.
+     */
+    public function computeEggStock(int $farmId, int $flockId, string $date, int|array|null $excludeRecordId = null): array
     {
         $asOf = Carbon::parse($date)->toDateString();
 
@@ -170,8 +173,9 @@ class SalesProfitLossService
             ->where('type', 'egg')
             ->whereDate('date', '<=', $asOf);
 
-        if ($excludeRecordId) {
-            $alreadySoldQuery->where('id', '!=', $excludeRecordId);
+        $excludeIds = array_filter((array) $excludeRecordId);
+        if ($excludeIds !== []) {
+            $alreadySoldQuery->whereNotIn('id', $excludeIds);
         }
 
         // Egg sales store quantity in crates; convert to eggs for stock math.
@@ -197,7 +201,7 @@ class SalesProfitLossService
      * @param  float  $quantityInCrates  Sale quantity in crates (not individual eggs).
      * @return array{valid: bool, message?: string, available?: float}
      */
-    public function validateEggSaleQuantity(int $farmId, int $flockId, string $date, float $quantityInCrates, ?int $excludeRecordId = null): array
+    public function validateEggSaleQuantity(int $farmId, int $flockId, string $date, float $quantityInCrates, int|array|null $excludeRecordId = null): array
     {
         $stock = $this->computeEggStock($farmId, $flockId, $date, $excludeRecordId);
         $available = $stock['available'];
