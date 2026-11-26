@@ -17,7 +17,7 @@ class EnsureFarmRole
 {
     $farm = $request->route('farm'); // or from subdomain/session
 
-    if (!auth()->user()->roles()->where('farm_id', $farm->id )->exists()) {
+    if (!auth()->user()->roles()->where('roles.farm_id', $farm->id)->exists()) {
         abort(403, 'Unauthorized for this farm.');
     }
 

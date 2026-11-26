@@ -217,7 +217,7 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function getRolesForFarm(Farm $farm): BelongsToMany
     {
-        return $this->roles()->where('farm_id', $farm->id);
+        return $this->roles()->where('roles.farm_id', $farm->id);
     }
     public function revokePermissionToForFarm($permissions, $farmId)
     {
@@ -233,26 +233,58 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->revokePermissionTo($permissions);
     }
 
+    /**
+     * Roles the user holds. Roles are per farm, so once a farm context is set
+     * (CheckFarmMembership does this for every farm route) only roles on that
+     * farm count. Without this scope hasPermissionTo() also counted roles the
+     * user holds on other farms, e.g. a manager elsewhere acting as a manager
+     * on a farm where they are only a worker.
+     *
+     * With no farm context set, all roles are returned (platform admin views,
+     * console commands), matching the previous behaviour.
+     */
     public function roles(): BelongsToMany
     {
-        return $this->morphToMany(
+        $relation = $this->morphToMany(
             Role::class,
             'model',
             'model_has_roles',
             'model_id',
             'role_id'
         )->where('model_type', User::class);
+
+        return $this->scopeToCurrentFarm($relation, 'model_has_roles');
     }
 
+    /**
+     * Direct permissions, scoped to the current farm the same way as roles().
+     */
     public function permissions(): BelongsToMany
     {
-        return $this->morphToMany(
+        $relation = $this->morphToMany(
             Permission::class,
             'model',
             'model_has_permissions',
             'model_id',
             'permission_id'
         )->where('model_type', User::class);
+
+        return $this->scopeToCurrentFarm($relation, 'model_has_permissions');
+    }
+
+    private function scopeToCurrentFarm(BelongsToMany $relation, string $pivotTable): BelongsToMany
+    {
+        $teamKey = config('permission.column_names.team_foreign_key', 'farm_id');
+        $farmId = app(PermissionRegistrar::class)->getPermissionsTeamId();
+
+        if ($farmId !== null) {
+            // wherePivot (not where) so detach() and sync() are scoped too:
+            // syncRoles() on one farm must not remove roles on other farms.
+            $relation->wherePivot($teamKey, $farmId);
+        }
+
+        // Keep the pivot column on loaded models; Spatie writes it on attach.
+        return $relation->withPivot($teamKey);
     }
 
     public function createdFarms(): HasMany
