@@ -18,27 +18,41 @@ class AdminPlatformSettingsController extends ApiController
 
     public function show(): JsonResponse
     {
-        return $this->sendResponse(
-            $this->settings->getSupportSettings(),
-            'Platform settings retrieved'
-        );
+        return $this->sendResponse($this->payload(), 'Platform settings retrieved');
     }
 
     public function update(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'farm_app_url' => ['required', 'string', 'url', 'max:255'],
+            'farm_app_url' => ['sometimes', 'required', 'string', 'url', 'max:255'],
+            'admin_security' => ['sometimes', 'array'],
+            'admin_security.otp_required' => ['sometimes', 'boolean'],
+            'admin_security.session_hours' => ['sometimes', 'integer', 'min:1', 'max:24'],
         ]);
 
-        $this->settings->setFarmAppUrl($validated['farm_app_url'], $request->user()->id);
+        if (isset($validated['admin_security']) && $request->user()->platform_admin_role !== 'super_admin') {
+            return $this->sendError('Only super admins can change admin security settings', [], 403);
+        }
 
-        $this->logAdminAction($request, 'platform_settings.update', 'platform_setting', null, null, [
-            'farm_app_url' => $this->settings->getFarmAppUrl(),
-        ]);
+        $before = $this->payload();
 
-        return $this->sendResponse(
-            $this->settings->getSupportSettings(),
-            'Platform settings updated'
-        );
+        if (isset($validated['farm_app_url'])) {
+            $this->settings->setFarmAppUrl($validated['farm_app_url'], $request->user()->id);
+        }
+        if (isset($validated['admin_security'])) {
+            $this->settings->setAdminSecurity($validated['admin_security'], $request->user()->id);
+        }
+
+        $after = $this->payload();
+        $this->logAdminAction($request, 'platform_settings.update', 'platform_setting', null, $before, $after);
+
+        return $this->sendResponse($after, 'Platform settings updated');
+    }
+
+    private function payload(): array
+    {
+        return $this->settings->getSupportSettings() + [
+            'admin_security' => $this->settings->getAdminSecurity(),
+        ];
     }
 }

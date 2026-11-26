@@ -75,9 +75,11 @@ class AuthController extends ApiController
 
         $user = User::where('email', $request->email)->firstOrFail();
 
-        if ($user->is_platform_admin) {
-            $user->update(['last_admin_login_at' => now()]);
+        if ($user->deactivated_at !== null) {
+            return $this->sendError('This account has been deactivated. Please contact support.', [], 403);
         }
+
+        $user->forceFill(['last_login_at' => now()])->save();
 
         $token = $user->createToken('auth_token')->plainTextToken;
         $data = [

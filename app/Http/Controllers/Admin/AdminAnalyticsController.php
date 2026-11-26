@@ -32,6 +32,36 @@ class AdminAnalyticsController extends ApiController
         );
     }
 
+    /**
+     * Totals for the chosen period and the same-length period before it.
+     */
+    public function compare(Request $request): JsonResponse
+    {
+        $end = $request->filled('to') ? \Carbon\Carbon::parse($request->to)->endOfDay() : now()->endOfDay();
+        $start = $request->filled('from') ? \Carbon\Carbon::parse($request->from)->startOfDay() : $end->copy()->subDays(29)->startOfDay();
+        $days = max(1, (int) $start->diffInDays($end) + 1);
+        $prevEnd = $start->copy()->subDay()->endOfDay();
+        $prevStart = $prevEnd->copy()->subDays($days - 1)->startOfDay();
+
+        $collect = function ($from, $to) {
+            $growth = $this->service->growth($from->toDateString(), $to->toDateString());
+            $usage = $this->service->usage($from->toDateString(), $to->toDateString());
+
+            return [
+                'users' => $growth['totals']['users'],
+                'farms' => $growth['totals']['farms'],
+                'ai_imports' => $usage['feature_totals']['ai_imports'],
+                'completed_tasks' => $usage['feature_totals']['completed_tasks'],
+                'new_flocks' => $usage['feature_totals']['new_flocks'],
+            ];
+        };
+
+        return $this->sendResponse([
+            'current' => ['from' => $start->toDateString(), 'to' => $end->toDateString()] + $collect($start, $end),
+            'previous' => ['from' => $prevStart->toDateString(), 'to' => $prevEnd->toDateString()] + $collect($prevStart, $prevEnd),
+        ], 'Period comparison retrieved');
+    }
+
     public function health(): JsonResponse
     {
         return $this->sendResponse($this->service->health(), 'Health analytics retrieved');

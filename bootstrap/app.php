@@ -13,6 +13,10 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
         then: function () {
+            Route::middleware(['api'])
+                ->prefix('api/admin/auth')
+                ->group(base_path('routes/admin_auth.php'));
+
             Route::middleware(['api', 'auth:sanctum', 'platform.admin'])
                 ->prefix('api/admin')
                 ->group(base_path('routes/admin.php'));

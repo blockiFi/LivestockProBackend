@@ -26,7 +26,7 @@ abstract class AdminTestCase extends TestCase
             'is_platform_admin' => true,
             'platform_admin_role' => 'super_admin',
         ]);
-        $this->adminToken = $this->admin->createToken('admin-test')->plainTextToken;
+        $this->adminToken = $this->adminTokenFor($this->admin);
 
         $this->regularUser = User::factory()->create([
             'is_platform_admin' => false,
@@ -40,6 +40,25 @@ abstract class AdminTestCase extends TestCase
             'status' => true,
         ]);
         $this->farm->users()->attach($this->regularUser->id);
+    }
+
+    /** A token as the admin sign-in issues it (carries the platform-admin ability). */
+    protected function adminTokenFor(User $user): string
+    {
+        return $user->createToken('admin-session', [config('admin.token_ability')], now()->addHours(8))->plainTextToken;
+    }
+
+    protected function makeAdmin(string $role): User
+    {
+        return User::factory()->create(['is_platform_admin' => true, 'platform_admin_role' => $role]);
+    }
+
+    /** Headers for a fresh admin with the given role; resets the cached guard user. */
+    protected function headersAs(User $user): array
+    {
+        $this->app['auth']->forgetGuards();
+
+        return ['Authorization' => 'Bearer ' . $this->adminTokenFor($user)];
     }
 
     protected function adminHeaders(): array

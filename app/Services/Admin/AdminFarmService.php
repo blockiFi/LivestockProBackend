@@ -10,12 +10,15 @@ use App\Models\User;
 use App\Services\FarmEntitlementService;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Spatie\Permission\PermissionRegistrar;
 
 class AdminFarmService
 {
-    public function list(Request $request): LengthAwarePaginator
+    public const SORTABLE = ['name', 'created_at', 'users_count', 'flocks_count', 'poultry_houses_count'];
+
+    public function query(Request $request): Builder
     {
         $query = Farm::withTrashed()
             ->with(['country:id,name', 'owner:id,name,email', 'subscription.plan:id,slug,name,price_kobo,ai_enabled'])
@@ -26,12 +29,18 @@ class AdminFarmService
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('email', 'like', "%{$search}%")
-                    ->orWhereHas('owner', fn ($oq) => $oq->where('email', 'like', "%{$search}%"));
+                    ->orWhere('phone', 'like', "%{$search}%")
+                    ->orWhereHas('owner', fn ($oq) => $oq->where('email', 'like', "%{$search}%")->orWhere('name', 'like', "%{$search}%"));
             });
         }
 
         if ($request->filled('status')) {
-            $query->where('status', filter_var($request->status, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? $request->status);
+            match ((string) $request->status) {
+                'deleted' => $query->onlyTrashed(),
+                'active', '1', 'true' => $query->whereNull('deleted_at')->where('status', true),
+                'suspended', 'inactive', '0', 'false' => $query->whereNull('deleted_at')->where('status', false),
+                default => null,
+            };
         }
 
         if ($request->filled('country_id')) {
@@ -46,8 +55,22 @@ class AdminFarmService
             $query->whereHas('subscription.plan', fn ($pq) => $pq->where('slug', $request->plan_slug));
         }
 
-        return $query->orderByDesc('created_at')
-            ->paginate($request->integer('per_page', 25));
+        if ($request->filled('created_from')) {
+            $query->whereDate('created_at', '>=', $request->created_from);
+        }
+        if ($request->filled('created_to')) {
+            $query->whereDate('created_at', '<=', $request->created_to);
+        }
+
+        $sort = in_array($request->input('sort'), self::SORTABLE, true) ? $request->input('sort') : 'created_at';
+        $direction = $request->input('direction') === 'asc' ? 'asc' : 'desc';
+
+        return $query->orderBy($sort, $direction)->orderBy('id', $direction);
+    }
+
+    public function list(Request $request): LengthAwarePaginator
+    {
+        return $this->query($request)->paginate(min(100, max(5, $request->integer('per_page', 25))));
     }
 
     public function show(Farm $farm): array
@@ -60,8 +83,12 @@ class AdminFarmService
 
         $farm->loadCount(['users', 'flocks', 'poultryHouses']);
 
-        $users = $farm->users()->get(['users.id', 'users.name', 'users.email'])->map(function (User $user) use ($farm) {
-            app(PermissionRegistrar::class)->setPermissionsTeamId($farm->id);
+        $registrar = app(PermissionRegistrar::class);
+        $previous = $registrar->getPermissionsTeamId();
+        $registrar->setPermissionsTeamId($farm->id);
+
+        $users = $farm->users()->withPivot('created_at')->get(['users.id', 'users.name', 'users.email', 'users.last_login_at', 'users.deactivated_at'])->map(function (User $user) use ($farm) {
+            $user->unsetRelation('roles');
             $roles = $user->roles()->where('roles.farm_id', $farm->id)->pluck('roles.name');
 
             return [
@@ -69,8 +96,13 @@ class AdminFarmService
                 'name' => $user->name,
                 'email' => $user->email,
                 'roles' => $roles,
+                'is_owner' => (int) $farm->created_by === $user->id,
+                'joined_at' => $user->pivot?->created_at ? \Carbon\Carbon::parse($user->pivot->created_at)->toIso8601String() : null,
+                'last_login_at' => $user->last_login_at?->toIso8601String(),
+                'deactivated' => $user->deactivated_at !== null,
             ];
         });
+        $registrar->setPermissionsTeamId($previous);
 
         $activeFlocks = Flock::where('farm_id', $farm->id)->where('status', 'active')->count();
         $totalBirds = Flock::where('farm_id', $farm->id)->where('status', 'active')->sum('quantity');
