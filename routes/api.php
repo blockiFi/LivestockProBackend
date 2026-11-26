@@ -622,6 +622,20 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('farms/{farm}/formulate-feed', [FeedFormulaAnalysisController::class, 'formulate'])->middleware('farm.ai');
     Route::post('farms/{farm}/formulate-feed/revise', [FeedFormulaAnalysisController::class, 'revise'])->middleware('farm.ai');
 
+    // Share schedules and feed formulations into the user's other farms
+    Route::get('farms/{farm}/share-targets', [\App\Http\Controllers\Api\FarmShareController::class, 'targets'])->middleware('farm.member');
+    Route::post('farms/{farm}/share', [\App\Http\Controllers\Api\FarmShareController::class, 'share'])->middleware('farm.member');
+    Route::middleware('farm.member')->prefix('farms/{farm}')->controller(\App\Http\Controllers\Api\FarmShareController::class)->group(function () {
+        Route::get('share-code', 'code');
+        Route::get('share-lookup', 'lookup');
+        Route::post('share/send', 'send');
+        Route::get('shares/incoming', 'incoming');
+        Route::get('shares/outgoing', 'outgoing');
+        Route::post('shares/{share}/accept', 'accept');
+        Route::post('shares/{share}/decline', 'decline');
+        Route::post('shares/{share}/cancel', 'cancel');
+    });
+
     // Invoice Routes
     Route::prefix('farms/{farm}/invoices')->group(function () {
         Route::get('/', [InvoiceController::class, 'index']);

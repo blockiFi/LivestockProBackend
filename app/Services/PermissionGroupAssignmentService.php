@@ -52,6 +52,7 @@ class PermissionGroupAssignmentService
                 'view feed usages', 'create feed usages', 'update feed usages', 'delete feed usages',
                 'view feeding schedules', 'create feeding schedules', 'update feeding schedules', 'delete feeding schedules',
                 'view feed types', 'create feed types', 'update feed types', 'delete feed types',
+                'view feed products', 'create feed products', 'update feed products', 'delete feed products', 'share feed products',
             ],
             'Inventory Management' => [
                 'view inventory', 'manage inventory',
@@ -60,7 +61,7 @@ class PermissionGroupAssignmentService
                 'view feed inventory', 'manage feed inventory',
             ],
             'Schedule Management' => [
-                'view schedules', 'create schedules', 'update schedules', 'delete schedules', 'manage schedules',
+                'view schedules', 'create schedules', 'update schedules', 'delete schedules', 'manage schedules', 'share schedules',
                 'view batch schedules', 'create batch schedules', 'update batch schedules', 'delete batch schedules',
                 'view feeding batch schedules', 'create feeding batch schedules', 'update feeding batch schedules', 'delete feeding batch schedules',
             ],
