@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Exceptions\InsufficientCustomerAccountBalance;
 use App\Models\Customer;
+use App\Models\CustomerAccountTransaction;
 use App\Models\Farm;
 use App\Models\Flock;
 use App\Models\SalesRecord;
@@ -34,6 +35,10 @@ class SalesRecordController extends ApiController
         }
 
         $query = SalesRecord::with(['flock:id,name,batch_number', 'customer:id,name'])
+            ->withSum(['accountTransactions as account_debited' => function ($q) {
+                $q->where('type', CustomerAccountTransaction::TYPE_SALE_PAYMENT)
+                    ->where('direction', CustomerAccountTransaction::DIRECTION_DEBIT);
+            }], 'amount')
             ->where('farm_id', $farmId);
 
         if ($request->filled('type')) {
@@ -257,6 +262,11 @@ class SalesRecordController extends ApiController
             'customer_phone' => 'nullable|string|max:50',
             'payment_method' => 'nullable|string|max:50',
             'payment_status' => 'nullable|in:pending,paid,partial',
+            'payment_mode' => 'nullable|in:cash,bank_transfer,pos,other,pending,partial,customer_account,account_and_other',
+            'account_amount' => 'nullable|numeric|min:0',
+            'other_amount' => 'nullable|numeric|min:0',
+            'other_payment_method' => 'nullable|in:cash,bank_transfer,pos,other',
+            'amount_paid' => 'nullable|numeric|min:0',
             'notes' => 'nullable|string|max:1000',
         ]);
 
@@ -266,21 +276,13 @@ class SalesRecordController extends ApiController
 
         $type = $request->input('type', $record->type);
         $flockId = $request->has('flock_id') ? $request->input('flock_id') : $record->flock_id;
-        $date = $request->input('date', $record->date?->toDateString());
         $quantity = round((float) $request->input('quantity', $record->quantity), 2);
         $unitPrice = round((float) $request->input('unit_price', $record->unit_price), 2);
         $total = round($quantity * $unitPrice, 2);
-        $paymentStatus = $request->input('payment_status', $record->payment_status);
-        $amountPaid = $record->amount_paid;
-        if ($request->has('payment_status')) {
-            $amountPaid = match ($paymentStatus) {
-                'paid' => $total,
-                'pending' => 0,
-                default => min($total, (float) ($record->amount_paid ?? 0)),
-            };
-        } elseif ($total !== (float) $record->total_amount) {
-            $amountPaid = min($total, (float) ($record->amount_paid ?? 0));
-        }
+        $dateValue = $request->input('date', $record->date);
+        $date = $dateValue instanceof \DateTimeInterface
+            ? $dateValue->format('Y-m-d')
+            : substr((string) $dateValue, 0, 10);
 
         if (in_array($type, ['egg', 'meat'], true) && ! $flockId) {
             return $this->sendValidationError('Validation failed', [
@@ -322,22 +324,71 @@ class SalesRecordController extends ApiController
             ]);
         }
 
-        $record->fill([
-            'type' => $type,
-            'flock_id' => $flockId,
-            'quantity' => $quantity,
-            'unit_price' => $unitPrice,
-            'total_amount' => $total,
-            'amount_paid' => $amountPaid,
-            'date' => $date,
-            'customer_id' => $customerFields['customer_id'],
-            'customer_name' => $customerFields['customer_name'],
-            'customer_phone' => $customerFields['customer_phone'],
-            'payment_method' => $request->has('payment_method') ? $request->input('payment_method') : $record->payment_method,
-            'payment_status' => $paymentStatus,
-            'notes' => $request->has('notes') ? $request->input('notes') : $record->notes,
-        ]);
-        $record->save();
+        $paymentStatus = $record->payment_status;
+        $amountPaid = (float) $record->amount_paid;
+        $paymentMethod = $record->payment_method;
+        $accountDebit = null;
+
+        if ($request->filled('payment_mode')) {
+            $paymentPlan = $this->resolvePaymentPlan($request, $farm, $total, $customerFields['customer_id']);
+            if ($paymentPlan['error'] !== null) {
+                return $paymentPlan['error'];
+            }
+            $amountPaid = $paymentPlan['amount_paid'];
+            $paymentStatus = $paymentPlan['payment_status'];
+            $paymentMethod = $paymentPlan['payment_method'];
+            $accountDebit = $paymentPlan['account_debit'];
+        } elseif ($request->has('payment_status')) {
+            $paymentStatus = $request->input('payment_status', $record->payment_status);
+            $amountPaid = match ($paymentStatus) {
+                'paid' => $total,
+                'pending' => 0,
+                default => min($total, round((float) $request->input('amount_paid', $record->amount_paid), 2)),
+            };
+            if ($request->has('payment_method')) {
+                $paymentMethod = $request->input('payment_method');
+            }
+        } elseif ($total !== (float) $record->total_amount) {
+            $amountPaid = min($total, (float) ($record->amount_paid ?? 0));
+        }
+
+        $previousCustomerId = $record->customer_id ? (int) $record->customer_id : null;
+
+        try {
+            DB::transaction(function () use ($request, $record, $farm, $type, $flockId, $quantity, $unitPrice, $total, $amountPaid, $date, $customerFields, $paymentMethod, $paymentStatus, $accountDebit, $previousCustomerId) {
+                $record->fill([
+                    'type' => $type,
+                    'flock_id' => $flockId,
+                    'quantity' => $quantity,
+                    'unit_price' => $unitPrice,
+                    'total_amount' => $total,
+                    'amount_paid' => $amountPaid,
+                    'date' => $date,
+                    'customer_id' => $customerFields['customer_id'],
+                    'customer_name' => $customerFields['customer_name'],
+                    'customer_phone' => $customerFields['customer_phone'],
+                    'payment_method' => $paymentMethod,
+                    'payment_status' => $paymentStatus,
+                    'notes' => $request->has('notes') ? $request->input('notes') : $record->notes,
+                ]);
+                $record->save();
+
+                if ($accountDebit !== null) {
+                    $this->syncAccountDebit(
+                        $farm,
+                        $record,
+                        $previousCustomerId,
+                        $customerFields['customer_id'] ? (int) $customerFields['customer_id'] : null,
+                        (float) $accountDebit,
+                        $request->user()
+                    );
+                }
+            });
+        } catch (InsufficientCustomerAccountBalance $e) {
+            return $this->sendValidationError($e->getMessage(), $e->toArray());
+        } catch (InvalidArgumentException $e) {
+            return $this->sendValidationError($e->getMessage());
+        }
 
         return $this->sendResponse($record->load(['flock:id,name,batch_number', 'customer:id,name']), 'Product sale updated successfully');
     }
@@ -386,7 +437,7 @@ class SalesRecordController extends ApiController
 
         if (in_array($mode, ['customer_account', 'account_and_other'], true)) {
             $canUseAccount = false;
-            foreach (['use customer account for payment', 'manage customers', 'create sales'] as $permission) {
+            foreach (['use customer account for payment', 'manage customers', 'create sales', 'update sales'] as $permission) {
                 try {
                     if ($request->user()->hasPermissionTo($permission, 'api', $farm)) {
                         $canUseAccount = true;
@@ -556,6 +607,75 @@ class SalesRecordController extends ApiController
             'account_debit' => $accountAmount,
             'error' => null,
         ];
+    }
+
+    /**
+     * Move the customer-account portion of a sale to the requested amount.
+     * Re-saving an unchanged sale does not debit again.
+     */
+    private function syncAccountDebit(
+        Farm $farm,
+        SalesRecord $record,
+        ?int $previousCustomerId,
+        ?int $newCustomerId,
+        float $targetDebit,
+        $actor
+    ): void {
+        $existing = $this->netAccountDebit($record);
+        $targetDebit = round(max(0, $targetDebit), 2);
+
+        if ($previousCustomerId && $previousCustomerId !== $newCustomerId && $existing > 0) {
+            $this->accounts->refundSalePayment(
+                Customer::findOrFail($previousCustomerId),
+                $record,
+                ['amount' => $existing, 'description' => 'Sale update refund #'.$record->id],
+                $actor
+            );
+            $existing = 0.0;
+        }
+
+        $delta = round($targetDebit - $existing, 2);
+        if (abs($delta) < 0.01 || ! $newCustomerId) {
+            return;
+        }
+
+        $customer = Customer::findOrFail($newCustomerId);
+        if ($delta > 0) {
+            $result = $this->accounts->debitForSale(
+                $customer,
+                $record,
+                $delta,
+                ['description' => 'Sale update #'.$record->id],
+                $actor
+            );
+            $this->accountNotifier->salePayment($farm, $customer, $result['transaction'], $result['account']);
+
+            return;
+        }
+
+        $this->accounts->refundSalePayment(
+            $customer,
+            $record,
+            ['amount' => abs($delta), 'description' => 'Sale update refund #'.$record->id],
+            $actor
+        );
+    }
+
+    private function netAccountDebit(SalesRecord $record): float
+    {
+        $debited = (float) CustomerAccountTransaction::query()
+            ->where('sales_record_id', $record->id)
+            ->where('type', CustomerAccountTransaction::TYPE_SALE_PAYMENT)
+            ->where('direction', CustomerAccountTransaction::DIRECTION_DEBIT)
+            ->sum('amount');
+
+        $returned = (float) CustomerAccountTransaction::query()
+            ->where('sales_record_id', $record->id)
+            ->whereIn('type', [CustomerAccountTransaction::TYPE_REFUND, CustomerAccountTransaction::TYPE_REVERSAL])
+            ->where('direction', CustomerAccountTransaction::DIRECTION_CREDIT)
+            ->sum('amount');
+
+        return round(max(0, $debited - $returned), 2);
     }
 
     private function canViewSales(Request $request, Farm $farm): bool
