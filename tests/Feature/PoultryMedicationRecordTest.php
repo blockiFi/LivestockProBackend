@@ -49,6 +49,7 @@ class PoultryMedicationRecordTest extends TestCase
 
         $permissions = collect([
             'view medications',
+            'create medications',
             'view medication records',
             'create medication records',
             'update medication records',
@@ -643,5 +644,26 @@ class PoultryMedicationRecordTest extends TestCase
 
         $this->assertNull($this->expenseFor($id));
         $this->assertEqualsWithDelta(50, (float) $this->inventory->fresh()->quantity, 0.001);
+    }
+
+    public function test_medication_type_can_be_added_with_just_a_name(): void
+    {
+        $this->api()->postJson("/api/farms/{$this->farm->id}/medications", ['name' => 'Herbal tonic'])
+            ->assertCreated()
+            ->assertJsonPath('data.farm_id', $this->farm->id)
+            ->assertJsonPath('data.type', 'user');
+    }
+
+    public function test_medication_type_name_is_unique_per_farm_only(): void
+    {
+        $this->api()->postJson("/api/farms/{$this->farm->id}/medications", ['name' => 'Antibiotics'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('name');
+
+        $other = Farm::factory()->create();
+        PoultryMedication::create(['farm_id' => $other->id, 'type' => 'user', 'name' => 'Herbal tonic']);
+
+        $this->api()->postJson("/api/farms/{$this->farm->id}/medications", ['name' => 'Herbal tonic'])
+            ->assertCreated();
     }
 }

@@ -46,6 +46,7 @@ class PoultryVaccinationRecordTest extends TestCase
         ]);
 
         $permissions = collect([
+            'create vaccines',
             'view vaccination records',
             'create vaccination records',
             'update vaccination records',
@@ -216,5 +217,25 @@ class PoultryVaccinationRecordTest extends TestCase
         $this->api()->deleteJson("/api/farms/{$this->farm->id}/vaccination-records/{$id}")->assertOk();
 
         $this->assertNull($this->expenseFor($id));
+    }
+
+    public function test_vaccine_can_be_added_with_just_a_name(): void
+    {
+        $this->api()->postJson("/api/farms/{$this->farm->id}/vaccines", ['name' => 'Gumboro'])
+            ->assertCreated()
+            ->assertJsonPath('data.farm_id', $this->farm->id);
+    }
+
+    public function test_vaccine_name_is_unique_per_farm_only(): void
+    {
+        $this->api()->postJson("/api/farms/{$this->farm->id}/vaccines", ['name' => 'Newcastle'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('name');
+
+        $other = Farm::factory()->create();
+        PoultryVaccine::create(['farm_id' => $other->id, 'name' => 'Gumboro']);
+
+        $this->api()->postJson("/api/farms/{$this->farm->id}/vaccines", ['name' => 'Gumboro'])
+            ->assertCreated();
     }
 }
