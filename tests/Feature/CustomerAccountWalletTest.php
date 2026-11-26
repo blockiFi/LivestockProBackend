@@ -317,6 +317,52 @@ class CustomerAccountWalletTest extends TestCase
             ->assertJsonPath('data.new_balance', 5000);
     }
 
+    public function test_updating_an_account_sale_adjusts_the_debit_once(): void
+    {
+        $this->topUp(100000);
+
+        $created = $this->withToken($this->token)
+            ->postJson("/api/farms/{$this->farm->id}/sales-records", [
+                'type' => 'manure',
+                'quantity' => 1,
+                'unit_price' => 30000,
+                'date' => now()->toDateString(),
+                'customer_id' => $this->customer->id,
+                'payment_mode' => 'customer_account',
+            ])
+            ->assertCreated();
+
+        $id = $created->json('data.id');
+
+        $this->withToken($this->token)
+            ->putJson("/api/farms/{$this->farm->id}/sales-records/{$id}", [
+                'type' => 'manure',
+                'quantity' => 1,
+                'unit_price' => 30000,
+                'date' => now()->toDateString(),
+                'customer_id' => $this->customer->id,
+                'payment_mode' => 'customer_account',
+                'notes' => 'Same total',
+            ])
+            ->assertOk();
+
+        $this->assertEquals(70000.0, (float) CustomerAccount::where('customer_id', $this->customer->id)->value('balance'));
+
+        $this->withToken($this->token)
+            ->putJson("/api/farms/{$this->farm->id}/sales-records/{$id}", [
+                'type' => 'manure',
+                'quantity' => 1,
+                'unit_price' => 40000,
+                'date' => now()->toDateString(),
+                'customer_id' => $this->customer->id,
+                'payment_mode' => 'customer_account',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.amount_paid', '40000.00');
+
+        $this->assertEquals(60000.0, (float) CustomerAccount::where('customer_id', $this->customer->id)->value('balance'));
+    }
+
     private function topUp(float $amount): void
     {
         $this->withToken($this->token)

@@ -391,6 +391,46 @@ class SalesRecordTest extends TestCase
         $this->assertEquals(2000.0, (float) $response->json('data.amount_paid'));
     }
 
+    public function test_update_keeps_partial_amount_paid(): void
+    {
+        $created = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->postJson("/api/farms/{$this->farm->id}/sales-records", [
+                'type' => 'manure',
+                'quantity' => 10,
+                'unit_price' => 500,
+                'date' => now()->toDateString(),
+                'customer_name' => 'Walk-in',
+                'payment_mode' => 'partial',
+                'payment_method' => 'cash',
+                'amount_paid' => 2000,
+            ])
+            ->assertStatus(201);
+
+        $id = $created->json('data.id');
+
+        $updated = $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->putJson("/api/farms/{$this->farm->id}/sales-records/{$id}", [
+                'type' => 'manure',
+                'quantity' => 8,
+                'unit_price' => 500,
+                'date' => now()->toDateString(),
+                'customer_name' => 'Walk-in',
+                'payment_mode' => 'partial',
+                'payment_method' => 'bank_transfer',
+                'payment_status' => 'partial',
+                'amount_paid' => 1500,
+                'notes' => 'Corrected',
+            ]);
+
+        $updated->assertOk()
+            ->assertJsonPath('data.payment_status', 'partial')
+            ->assertJsonPath('data.payment_method', 'bank_transfer')
+            ->assertJsonPath('data.notes', 'Corrected');
+
+        $this->assertEquals(4000.0, (float) $updated->json('data.total_amount'));
+        $this->assertEquals(1500.0, (float) $updated->json('data.amount_paid'));
+    }
+
     public function test_partial_payment_rejects_amount_equal_to_total(): void
     {
         $this->withHeader('Authorization', 'Bearer ' . $this->token)
