@@ -14,6 +14,21 @@ use Illuminate\Support\Facades\DB;
 class PoultryVaccinationRecordController extends ApiController
 {
     /**
+     * Cost typed in on the form, or null when left empty.
+     */
+    private function enteredCost(Request $request): ?float
+    {
+        return $request->filled('cost') ? round((float) $request->input('cost'), 2) : null;
+    }
+
+    private function restock(PoultryVaccineInventory $inventory, float $delta): void
+    {
+        $inventory->quantity = (float) $inventory->quantity + $delta;
+        $inventory->status = $inventory->quantity <= 0 ? 'depleted' : 'available';
+        $inventory->save();
+    }
+
+    /**
      * Store a newly created vaccination record.
      */
     public function store(Request $request, $farmId)
@@ -22,12 +37,14 @@ class PoultryVaccinationRecordController extends ApiController
             'farm_id' => 'required|exists:farms,id',
             'flock_id' => 'required|exists:flocks,id',
             'poultry_vaccine_id' => 'required|exists:poultry_vaccines,id',
-            'poultry_vaccine_inventory_id' => 'required|exists:poultry_vaccine_inventories,id',
+            'poultry_vaccine_inventory_id' => 'nullable|exists:poultry_vaccine_inventories,id',
             'date' => 'required|date',
             'administered_by' => 'required|string|max:255',
             'dosage' => 'required|numeric|min:0',
             'dosage_unit' => 'required|string|max:50',
-            'quantity' => 'required|numeric|min:0',
+            // Only needed to deduct stock; optional when nothing is drawn from inventory.
+            'quantity' => 'required_with:poultry_vaccine_inventory_id|nullable|numeric|min:0',
+            'cost' => 'nullable|numeric|min:0',
             'notes' => 'nullable|string',
             'administration_method_id' => 'required|exists:administration_methods,id',
         ]);
@@ -51,9 +68,46 @@ class PoultryVaccinationRecordController extends ApiController
         try {
             DB::beginTransaction();
 
-            // Get the vaccine inventory to calculate cost
-            $inventory = PoultryVaccineInventory::findOrFail($request->poultry_vaccine_inventory_id);
-            
+            $enteredCost = $this->enteredCost($request);
+            $quantityUsed = $request->filled('quantity') ? (float) $request->quantity : 0.0;
+
+            if (! $request->filled('poultry_vaccine_inventory_id')) {
+                // Not drawn from stock: nothing is deducted, cost is whatever was entered.
+                $vaccinationRecord = PoultryVaccinationRecord::create([
+                    'farm_id' => $request->farm_id,
+                    'flock_id' => $request->flock_id,
+                    'poultry_vaccine_id' => $request->poultry_vaccine_id,
+                    'poultry_vaccine_inventory_id' => null,
+                    'date' => $request->date,
+                    'administered_by' => $request->administered_by,
+                    'dosage' => $request->dosage,
+                    'dosage_unit' => $request->dosage_unit,
+                    'quantity' => $quantityUsed,
+                    'cost' => $enteredCost,
+                    'notes' => $request->notes,
+                    'administration_method_id' => $request->administration_method_id,
+                ]);
+
+                FlockExpenditure::recordFromVaccination($vaccinationRecord);
+
+                $vaccinationRecord->load(['vaccine', 'vaccineInventory', 'administrationMethod']);
+
+                DB::commit();
+
+                return $this->sendResponse($vaccinationRecord, 'Vaccination record created successfully');
+            }
+
+            $inventory = PoultryVaccineInventory::where('farm_id', $farm->id)
+                ->lockForUpdate()
+                ->find($request->poultry_vaccine_inventory_id);
+
+            if (! $inventory) {
+                DB::rollback();
+                return $this->sendValidationError('Validation failed', [
+                    'poultry_vaccine_inventory_id' => ['This inventory batch does not belong to this farm.'],
+                ]);
+            }
+
             // Check if there's enough quantity in inventory
             if ($inventory->quantity < $request->quantity) {
                 DB::rollback();
@@ -63,8 +117,8 @@ class PoultryVaccinationRecordController extends ApiController
                 ], 400);
             }
             
-            // Calculate cost based on quantity used and unit cost from inventory
-            $calculatedCost = $request->quantity * $inventory->unit_cost;
+            // An entered cost wins; otherwise price the doses used from the batch.
+            $calculatedCost = $enteredCost ?? round($request->quantity * $inventory->unit_cost, 2);
 
             $vaccinationRecord = PoultryVaccinationRecord::create([
                 'farm_id' => $request->farm_id,
@@ -188,12 +242,13 @@ class PoultryVaccinationRecordController extends ApiController
     {
         $validator = Validator::make($request->all(), [
             'poultry_vaccine_id' => 'sometimes|required|exists:poultry_vaccines,id',
-            'poultry_vaccine_inventory_id' => 'sometimes|required|exists:poultry_vaccine_inventories,id',
+            'poultry_vaccine_inventory_id' => 'sometimes|nullable|exists:poultry_vaccine_inventories,id',
             'date' => 'sometimes|required|date',
             'administered_by' => 'sometimes|required|string|max:255',
             'dosage' => 'sometimes|required|numeric|min:0',
             'dosage_unit' => 'sometimes|required|string|max:50',
-            'quantity' => 'sometimes|required|numeric|min:0',
+            'quantity' => 'sometimes|nullable|numeric|min:0',
+            'cost' => 'sometimes|nullable|numeric|min:0',
             'notes' => 'nullable|string',
             'administration_method_id' => 'sometimes|required|exists:administration_methods,id',
         ]);
@@ -231,13 +286,54 @@ class PoultryVaccinationRecordController extends ApiController
                 'administration_method_id',
             ]);
 
-            // If inventory or quantity is being updated, recalculate cost
-            if ($request->has('poultry_vaccine_inventory_id') || $request->has('quantity')) {
-                $inventoryId = $request->poultry_vaccine_inventory_id ?? $vaccinationRecord->poultry_vaccine_inventory_id;
-                $quantity = $request->quantity ?? $vaccinationRecord->quantity;
-                
-                $inventory = PoultryVaccineInventory::findOrFail($inventoryId);
-                $updateData['cost'] = $quantity * $inventory->unit_cost;
+            $oldInventoryId = (int) $vaccinationRecord->poultry_vaccine_inventory_id;
+            $oldQuantity = (float) $vaccinationRecord->quantity;
+            $inventoryId = $request->exists('poultry_vaccine_inventory_id')
+                ? (int) $request->input('poultry_vaccine_inventory_id')
+                : $oldInventoryId;
+            $quantity = $request->has('quantity') ? (float) $request->input('quantity') : $oldQuantity;
+            $stockTouched = $request->has('poultry_vaccine_inventory_id') || $request->has('quantity');
+            $inventory = null;
+
+            if ($stockTouched) {
+                // Give the old batch back what it lost, then take from the (new) batch.
+                if ($oldInventoryId && ($oldInventory = PoultryVaccineInventory::lockForUpdate()->find($oldInventoryId))) {
+                    $this->restock($oldInventory, $oldQuantity);
+                }
+
+                $updateData['poultry_vaccine_inventory_id'] = $inventoryId ?: null;
+                $updateData['quantity'] = $quantity;
+
+                if ($inventoryId) {
+                    $inventory = PoultryVaccineInventory::where('farm_id', $farm->id)
+                        ->lockForUpdate()
+                        ->find($inventoryId);
+                    if (! $inventory) {
+                        DB::rollback();
+                        return $this->sendValidationError('Validation failed', [
+                            'poultry_vaccine_inventory_id' => ['This inventory batch does not belong to this farm.'],
+                        ]);
+                    }
+                    if ((float) $inventory->quantity + 1e-6 < $quantity) {
+                        DB::rollback();
+                        return $this->sendError('Insufficient vaccine quantity in inventory', [
+                            'available_quantity' => $inventory->quantity,
+                            'requested_quantity' => $quantity,
+                        ], 400);
+                    }
+                    $this->restock($inventory, -$quantity);
+                }
+            } elseif ($inventoryId) {
+                $inventory = PoultryVaccineInventory::find($inventoryId);
+            }
+
+            $inventoryCost = $inventory ? round($quantity * (float) $inventory->unit_cost, 2) : null;
+
+            if ($request->exists('cost')) {
+                // Entered cost wins; clearing it falls back to the batch price (if any).
+                $updateData['cost'] = $this->enteredCost($request) ?? $inventoryCost;
+            } elseif ($stockTouched && ($inventoryId || $oldInventoryId)) {
+                $updateData['cost'] = $inventoryCost;
             }
 
             $vaccinationRecord->update($updateData);
@@ -283,30 +379,14 @@ class PoultryVaccinationRecordController extends ApiController
         try {
             DB::beginTransaction();
 
-            // Get the vaccine inventory to restore the quantity
-            $inventory = PoultryVaccineInventory::findOrFail($vaccinationRecord->poultry_vaccine_inventory_id);
-            
-            // Restore the inventory quantity by adding back the used quantity
-            $originalQuantity = $inventory->quantity;
-            $inventory->quantity += $vaccinationRecord->quantity;
-            
-            // Log the inventory restoration for debugging
-            \Log::info('Vaccination Record Deleted - Inventory Restored', [
-                'inventory_id' => $inventory->id,
-                'original_quantity' => $originalQuantity,
-                'restored_quantity' => $vaccinationRecord->quantity,
-                'new_quantity' => $inventory->quantity,
-                'vaccination_record_id' => $vaccinationRecord->id
-            ]);
-            
-            // Update status based on restored quantity
-            if ($inventory->quantity <= 0) {
-                $inventory->status = 'depleted';
-            } else {
-                $inventory->status = 'available';
+            // Give the used doses back to the batch they came from (records off stock have none).
+            $inventory = $vaccinationRecord->poultry_vaccine_inventory_id
+                ? PoultryVaccineInventory::lockForUpdate()->find($vaccinationRecord->poultry_vaccine_inventory_id)
+                : null;
+
+            if ($inventory) {
+                $this->restock($inventory, (float) $vaccinationRecord->quantity);
             }
-            
-            $inventory->save();
 
             // Delete the vaccination record
             $vaccinationRecord->delete();
@@ -316,7 +396,9 @@ class PoultryVaccinationRecordController extends ApiController
 
             DB::commit();
 
-            return $this->sendResponse([], 'Vaccination record deleted successfully and inventory quantity restored');
+            return $this->sendResponse([], $inventory
+                ? 'Vaccination record deleted successfully and inventory quantity restored'
+                : 'Vaccination record deleted successfully');
         } catch (\Exception $e) {
             DB::rollback();
             return $this->sendError('Failed to delete vaccination record', [$e->getMessage()], 500);

@@ -36,6 +36,14 @@ class PoultryMedicationRecordController extends ApiController
     }
 
     /**
+     * Cost typed in on the form, or null when left empty.
+     */
+    private function enteredCost(Request $request): ?float
+    {
+        return $request->filled('cost') ? round((float) $request->input('cost'), 2) : null;
+    }
+
+    /**
      * Store a newly created medication record.
      */
     public function store(Request $request, $farmId)
@@ -44,13 +52,14 @@ class PoultryMedicationRecordController extends ApiController
             'farm_id' => 'required|exists:farms,id',
             'flock_id' => 'required|exists:flocks,id',
             'poultry_medication_id' => 'required|exists:poultry_medications,id',
-            'poultry_medication_inventory_id' => 'required|exists:poultry_medication_inventories,id',
+            'poultry_medication_inventory_id' => 'nullable|exists:poultry_medication_inventories,id',
             'date' => 'required|date',
             'administered_by' => 'required|string|max:255',
             'dosage' => 'required|numeric|min:0.0001',
             'dosage_unit' => 'required|string|max:50',
             'quantity' => 'nullable|numeric|min:0',
             'purpose' => 'nullable|string|in:preventive,treatment',
+            'cost' => 'nullable|numeric|min:0',
             'notes' => 'nullable|string',
             'administration_method_id' => 'required|exists:administration_methods,id',
         ]);
@@ -76,6 +85,35 @@ class PoultryMedicationRecordController extends ApiController
 
         try {
             DB::beginTransaction();
+
+            $enteredCost = $this->enteredCost($request);
+
+            if (! $request->filled('poultry_medication_inventory_id')) {
+                // Not drawn from stock: nothing is deducted, cost is whatever was entered.
+                $medicationRecord = PoultryMedicationRecord::create([
+                    'farm_id' => $request->farm_id,
+                    'flock_id' => $request->flock_id,
+                    'poultry_medication_id' => $request->poultry_medication_id,
+                    'poultry_medication_inventory_id' => null,
+                    'date' => $request->date,
+                    'administered_by' => $request->administered_by,
+                    'dosage' => $amountUsed,
+                    'dosage_unit' => $amountUnit,
+                    'purpose' => $request->input('purpose'),
+                    'quantity' => $request->filled('quantity') ? round((float) $request->input('quantity'), 4) : $amountUsed,
+                    'cost' => $enteredCost,
+                    'notes' => $request->notes,
+                    'administration_method_id' => $request->administration_method_id,
+                ]);
+
+                FlockExpenditure::recordFromMedication($medicationRecord);
+
+                $medicationRecord->load(['medication', 'medicationInventory.product', 'administrationMethod']);
+
+                DB::commit();
+
+                return $this->sendResponse($medicationRecord, 'Medication record created successfully');
+            }
 
             $inventory = PoultryMedicationInventory::with('product')
                 ->where('farm_id', $farm->id)
@@ -117,7 +155,8 @@ class PoultryMedicationRecordController extends ApiController
                 ], 400);
             }
             
-            $calculatedCost = $inventory->costOf($quantity);
+            // An entered cost wins; otherwise price the amount used from the batch.
+            $calculatedCost = $enteredCost ?? $inventory->costOf($quantity);
 
             $medicationRecord = PoultryMedicationRecord::create([
                 'farm_id' => $request->farm_id,
@@ -223,13 +262,14 @@ class PoultryMedicationRecordController extends ApiController
     {
         $validator = Validator::make($request->all(), [
             'poultry_medication_id' => 'sometimes|required|exists:poultry_medications,id',
-            'poultry_medication_inventory_id' => 'sometimes|required|exists:poultry_medication_inventories,id',
+            'poultry_medication_inventory_id' => 'sometimes|nullable|exists:poultry_medication_inventories,id',
             'date' => 'sometimes|required|date',
             'administered_by' => 'sometimes|required|string|max:255',
             'dosage' => 'sometimes|required|numeric|min:0.0001',
             'dosage_unit' => 'sometimes|required|string|max:50',
             'quantity' => 'sometimes|nullable|numeric|min:0',
             'purpose' => 'nullable|string|in:preventive,treatment',
+            'cost' => 'sometimes|nullable|numeric|min:0',
             'notes' => 'nullable|string',
             'administration_method_id' => 'sometimes|required|exists:administration_methods,id',
         ]);
@@ -268,14 +308,33 @@ class PoultryMedicationRecordController extends ApiController
                 'administration_method_id',
             ]);
 
-            if ($request->has('poultry_medication_inventory_id')
+            $stockTouched = $request->has('poultry_medication_inventory_id')
                 || $request->has('quantity')
                 || $request->has('dosage')
-                || $request->has('dosage_unit')) {
+                || $request->has('dosage_unit');
+            $hadInventory = (bool) $medicationRecord->poultry_medication_inventory_id;
+            $inventoryCost = null;
+            $inventoryId = (int) $medicationRecord->poultry_medication_inventory_id;
+
+            if ($stockTouched) {
                 $oldInventoryId = (int) $medicationRecord->poultry_medication_inventory_id;
                 $oldQuantity = (float) $medicationRecord->quantity;
-                $inventoryId = (int) ($request->poultry_medication_inventory_id ?? $oldInventoryId);
+                $inventoryId = $request->exists('poultry_medication_inventory_id')
+                    ? (int) $request->input('poultry_medication_inventory_id')
+                    : $oldInventoryId;
+            }
 
+            if ($stockTouched && ! $inventoryId) {
+                // Not (or no longer) drawn from stock: give back what the old batch lost.
+                if ($oldInventoryId && ($oldInventory = PoultryMedicationInventory::lockForUpdate()->find($oldInventoryId))) {
+                    $oldInventory->quantity = round((float) $oldInventory->quantity + $oldQuantity, 4);
+                    $oldInventory->updateStatus();
+                }
+                $updateData['poultry_medication_inventory_id'] = null;
+                if ($request->has('dosage') && ! $request->has('quantity')) {
+                    $updateData['quantity'] = round((float) $request->input('dosage'), 4);
+                }
+            } elseif ($stockTouched) {
                 $inventory = PoultryMedicationInventory::where('farm_id', $farm->id)
                     ->lockForUpdate()
                     ->find($inventoryId);
@@ -328,7 +387,22 @@ class PoultryMedicationRecordController extends ApiController
                 $inventory->quantity = max(0, round($available - $quantity, 4));
                 $inventory->updateStatus();
 
-                $updateData['cost'] = $inventory->costOf($quantity);
+                $inventoryCost = $inventory->costOf($quantity);
+            }
+
+            if ($request->exists('cost')) {
+                // Entered cost wins; clearing it falls back to the batch price (if any).
+                $updateData['cost'] = $this->enteredCost($request);
+                if ($updateData['cost'] === null && $inventoryId) {
+                    $inventoryCost ??= PoultryMedicationInventory::find($inventoryId)
+                        ?->costOf((float) ($updateData['quantity'] ?? $medicationRecord->quantity));
+                    $updateData['cost'] = $inventoryCost;
+                }
+            } elseif ($stockTouched && $inventoryId) {
+                $updateData['cost'] = $inventoryCost;
+            } elseif ($stockTouched && $hadInventory) {
+                // Moved off stock with no cost entered: the old batch price no longer applies.
+                $updateData['cost'] = null;
             }
 
             $medicationRecord->update($updateData);
@@ -374,13 +448,16 @@ class PoultryMedicationRecordController extends ApiController
         try {
             DB::beginTransaction();
 
-            // Get the medication inventory to restore the quantity
-            $inventory = PoultryMedicationInventory::lockForUpdate()
-                ->findOrFail($medicationRecord->poultry_medication_inventory_id);
+            // Give the used amount back to the batch it came from (records off stock have none).
+            $inventory = $medicationRecord->poultry_medication_inventory_id
+                ? PoultryMedicationInventory::lockForUpdate()->find($medicationRecord->poultry_medication_inventory_id)
+                : null;
 
-            // Restore the inventory quantity by adding back the used quantity (stored in the batch's unit)
-            $inventory->quantity = round((float) $inventory->quantity + (float) $medicationRecord->quantity, 4);
-            $inventory->updateStatus(); // This will save and update status automatically
+            if ($inventory) {
+                // Stored in the batch's unit
+                $inventory->quantity = round((float) $inventory->quantity + (float) $medicationRecord->quantity, 4);
+                $inventory->updateStatus(); // This will save and update status automatically
+            }
 
             // Delete the medication record
             $medicationRecord->delete();
@@ -390,7 +467,9 @@ class PoultryMedicationRecordController extends ApiController
 
             DB::commit();
 
-            return $this->sendResponse([], 'Medication record deleted successfully and inventory quantity restored');
+            return $this->sendResponse([], $inventory
+                ? 'Medication record deleted successfully and inventory quantity restored'
+                : 'Medication record deleted successfully');
         } catch (\Exception $e) {
             DB::rollback();
             return $this->sendError('Failed to delete medication record', [$e->getMessage()], 500);
