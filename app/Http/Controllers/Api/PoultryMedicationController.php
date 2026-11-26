@@ -102,14 +102,22 @@ class PoultryMedicationController extends ApiController
             return $this->sendUnauthorizedError('Unauthorized to create medications');
         }
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255|unique:poultry_medications,name',
+            // Unique among this farm's own types and the platform defaults it can see;
+            // other farms may use the same name.
+            'name' => [
+                'required', 'string', 'max:255',
+                Rule::unique('poultry_medications', 'name')
+                    ->where(fn ($q) => $q->where(fn ($w) => $w->where('farm_id', $farm->id)->orWhereNull('farm_id')))
+                    ->whereNull('deleted_at'),
+            ],
             'description' => 'nullable|string',
-           
+        ], [
+            'name.unique' => 'A medication type with this name already exists.',
         ]);
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
-        $medication = PoultryMedication::create(array_merge($request->all(), [
+        $medication = PoultryMedication::create(array_merge($request->only(['name', 'description']), [
             'farm_id' => $farm->id,
             'type' => 'user',
         ]));

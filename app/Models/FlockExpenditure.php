@@ -210,6 +210,9 @@ class FlockExpenditure extends Model
     public static function recordFromMedication(PoultryMedicationRecord $record): ?self
     {
         if ($record->cost === null || $record->cost <= 0) {
+            // Cost removed or never set: drop any expense created for it earlier.
+            static::deleteForSource('medication_record', (int) $record->id);
+
             return null;
         }
 
@@ -237,6 +240,9 @@ class FlockExpenditure extends Model
     public static function recordFromVaccination(PoultryVaccinationRecord $record): ?self
     {
         if ($record->cost === null || $record->cost <= 0) {
+            // Cost removed or never set: drop any expense created for it earlier.
+            static::deleteForSource('vaccination_record', (int) $record->id);
+
             return null;
         }
 

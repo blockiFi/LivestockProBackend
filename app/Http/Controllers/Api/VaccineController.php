@@ -163,16 +163,25 @@ class VaccineController extends ApiController
         }
 
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'description' => 'required|string',
-            'administration_age' => 'required|integer|min:1',
+            // Unique among this farm's own vaccines and the platform defaults it can see;
+            // other farms may use the same name.
+            'name' => [
+                'required', 'string', 'max:255',
+                Rule::unique('poultry_vaccines', 'name')
+                    ->where(fn ($q) => $q->where(fn ($w) => $w->where('farm_id', $farm->id)->orWhereNull('farm_id')))
+                    ->whereNull('deleted_at'),
+            ],
+            'description' => 'nullable|string',
+            'administration_age' => 'nullable|integer|min:1',
+        ], [
+            'name.unique' => 'A vaccine with this name already exists.',
         ]);
 
         if ($validator->fails()) {
             return $this->sendValidationError('Validation failed', $validator->errors()->toArray());
         }
 
-        $vaccine = $farm->vaccines()->create($request->all() + [
+        $vaccine = $farm->vaccines()->create($request->only(['name', 'description', 'administration_age']) + [
             'type' => 'user',
         ]);
 
