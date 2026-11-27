@@ -9,6 +9,7 @@ use App\Models\SubscriptionTransaction;
 use App\Services\FarmEntitlementService;
 use App\Services\FarmSubscriptionService;
 use App\Services\PaystackService;
+use App\Support\BillingCycle;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -42,10 +43,12 @@ class PaystackWebhookController extends ApiController
         }
 
         $subscription = $this->entitlements->subscription($farm);
-        $plan = $this->resolvePlan($data) ?? $subscription->plan;
+        [$resolvedPlan, $codeCycle] = $this->resolvePlan($data);
+        $plan = $resolvedPlan ?? $subscription->plan;
+        $cycle = $this->resolveCycle($data, $codeCycle) ?? $subscription->billing_cycle;
 
         match ($event) {
-            'charge.success', 'subscription.create' => $this->handlePaymentSuccess($subscription, $plan, $data),
+            'charge.success', 'subscription.create' => $this->handlePaymentSuccess($subscription, $plan, $cycle, $data),
             'invoice.payment_failed', 'subscription.not_renew' => $this->subscriptions->markPastDue($subscription),
             'subscription.disable' => $this->handleDisable($subscription),
             default => null,
@@ -60,6 +63,7 @@ class PaystackWebhookController extends ApiController
             amountKobo: isset($data['amount']) ? (int) $data['amount'] : null,
             reference: $data['reference'] ?? ($data['subscription_code'] ?? null),
             status: $data['status'] ?? null,
+            billingCycle: $cycle,
         );
 
         return $this->sendResponse(null, 'Webhook processed');
@@ -68,7 +72,7 @@ class PaystackWebhookController extends ApiController
     /**
      * @param  array<string,mixed>  $data
      */
-    private function handlePaymentSuccess(FarmSubscription $subscription, ?SubscriptionPlan $plan, array $data): void
+    private function handlePaymentSuccess(FarmSubscription $subscription, ?SubscriptionPlan $plan, string $cycle, array $data): void
     {
         if (! $plan) {
             return;
@@ -89,9 +93,9 @@ class PaystackWebhookController extends ApiController
         $periodStart = isset($data['paid_at']) ? Carbon::parse($data['paid_at']) : now();
         $periodEnd = isset($data['next_payment_date'])
             ? Carbon::parse($data['next_payment_date'])
-            : $periodStart->copy()->addMonth();
+            : $periodStart->copy()->addMonthsNoOverflow(BillingCycle::months($cycle));
 
-        $this->subscriptions->activate($subscription, $plan, $periodStart, $periodEnd);
+        $this->subscriptions->activate($subscription, $plan, $periodStart, $periodEnd, $cycle);
     }
 
     private function handleDisable(FarmSubscription $subscription): void
@@ -132,18 +136,39 @@ class PaystackWebhookController extends ApiController
     }
 
     /**
+     * The plan a payment was for, plus the cycle its Paystack plan code bills on.
+     *
+     * @param  array<string,mixed>  $data
+     * @return array{0:?SubscriptionPlan,1:?string}
+     */
+    private function resolvePlan(array $data): array
+    {
+        $code = is_string($data['plan'] ?? null)
+            ? $data['plan']
+            : (data_get($data, 'plan.plan_code') ?? data_get($data, 'plan_code'));
+        $byCode = is_string($code) && $code !== '' ? SubscriptionPlan::findByPaystackCode($code) : null;
+
+        if ($slug = data_get($data, 'metadata.plan_slug')) {
+            return [SubscriptionPlan::where('slug', $slug)->first(), $byCode[1] ?? null];
+        }
+
+        return $byCode ? [$byCode[0], $byCode[1]] : [null, null];
+    }
+
+    /**
+     * Checkout metadata wins, then the Paystack plan's own interval.
+     * Renewal charges carry no metadata, so the plan is what tells them apart.
+     *
      * @param  array<string,mixed>  $data
      */
-    private function resolvePlan(array $data): ?SubscriptionPlan
+    private function resolveCycle(array $data, ?string $codeCycle): ?string
     {
-        if ($slug = data_get($data, 'metadata.plan_slug')) {
-            return SubscriptionPlan::where('slug', $slug)->first();
+        $fromMetadata = data_get($data, 'metadata.billing_cycle');
+
+        if (BillingCycle::isValid($fromMetadata)) {
+            return $fromMetadata;
         }
 
-        if ($code = data_get($data, 'plan.plan_code') ?? data_get($data, 'plan_code')) {
-            return SubscriptionPlan::where('paystack_plan_code', $code)->first();
-        }
-
-        return null;
+        return $codeCycle ?? BillingCycle::fromPaystackInterval(data_get($data, 'plan.interval'));
     }
 }

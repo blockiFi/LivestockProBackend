@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Farm;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
+use App\Support\BillingCycle;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -24,28 +25,36 @@ class PaystackService
      * Paystack subscribes the customer automatically when the transaction is
      * initialised with a plan code, so a single call covers both cases.
      *
-     * @return array{authorization_url:string,access_code:string,reference:string}|null
+     * 6-month and yearly cycles charge the discounted total up front. They get
+     * a Paystack plan of their own (created on first use) so the farm renews
+     * on the same cycle; if Paystack refuses to create one the farm still pays
+     * for the full period, it just renews by hand.
+     *
+     * @return array{authorization_url:string,access_code:string,reference:string,amount_kobo:int,billing_cycle:string}|null
      */
-    public function initializeSubscription(Farm $farm, SubscriptionPlan $plan, User $user): ?array
+    public function initializeSubscription(Farm $farm, SubscriptionPlan $plan, User $user, string $cycle = BillingCycle::MONTHLY): ?array
     {
         if (! $this->isConfigured()) {
             return null;
         }
 
+        $amountKobo = $plan->priceKoboFor($cycle);
+
         $payload = [
             'email' => $user->email,
-            'amount' => $plan->price_kobo,
+            'amount' => $amountKobo,
             'currency' => $plan->currency,
             'callback_url' => config('paystack.callback_url').'?farm='.$farm->id,
             'metadata' => [
                 'farm_id' => $farm->id,
                 'plan_slug' => $plan->slug,
+                'billing_cycle' => $cycle,
                 'user_id' => $user->id,
             ],
         ];
 
-        if ($plan->paystack_plan_code) {
-            $payload['plan'] = $plan->paystack_plan_code;
+        if ($planCode = $this->planCodeFor($plan, $cycle)) {
+            $payload['plan'] = $planCode;
         }
 
         $response = $this->request('post', '/transaction/initialize', $payload);
@@ -58,7 +67,43 @@ class PaystackService
             'authorization_url' => $response['authorization_url'] ?? '',
             'access_code' => $response['access_code'] ?? '',
             'reference' => $response['reference'] ?? '',
+            'amount_kobo' => $amountKobo,
+            'billing_cycle' => $cycle,
         ];
+    }
+
+    /**
+     * The Paystack plan for a plan and cycle, creating it for longer cycles
+     * the first time (or after a price change).
+     */
+    public function planCodeFor(SubscriptionPlan $plan, string $cycle): ?string
+    {
+        if ($code = $plan->paystackPlanCodeFor($cycle)) {
+            return $code;
+        }
+
+        // Monthly plans are set up by hand in the Paystack dashboard, as before.
+        if ($cycle === BillingCycle::MONTHLY) {
+            return null;
+        }
+
+        $created = $this->request('post', '/plan', [
+            'name' => sprintf('%s %s (%s)', config('app.name', 'FarmCentral'), $plan->name, BillingCycle::label($cycle)),
+            'amount' => $plan->priceKoboFor($cycle),
+            'interval' => BillingCycle::paystackInterval($cycle),
+            'currency' => $plan->currency,
+            'description' => sprintf('%d%% off %d months of %s', BillingCycle::discountPercent($cycle), BillingCycle::months($cycle), $plan->name),
+        ]);
+
+        $code = $created['plan_code'] ?? null;
+
+        if (! $code) {
+            return null;
+        }
+
+        $plan->rememberPaystackPlanCode($cycle, $code);
+
+        return $code;
     }
 
     /**

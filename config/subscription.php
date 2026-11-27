@@ -35,4 +35,19 @@ return [
     |
     */
     'trial_plan' => env('SUBSCRIPTION_TRIAL_PLAN', 'basic'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Longer billing cycles
+    |--------------------------------------------------------------------------
+    |
+    | Percent off the monthly price when a farm pays for 6 months or a year up
+    | front. See App\Support\BillingCycle.
+    |
+    */
+    'billing_cycle_discounts' => [
+        'monthly' => 0,
+        'biannual' => env('SUBSCRIPTION_BIANNUAL_DISCOUNT', 5),
+        'annual' => env('SUBSCRIPTION_ANNUAL_DISCOUNT', 10),
+    ],
 ];
