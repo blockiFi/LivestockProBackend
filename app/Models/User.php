@@ -34,6 +34,9 @@ class User extends Authenticatable implements MustVerifyEmail
         'is_platform_admin',
         'platform_admin_role',
         'last_admin_login_at',
+        'last_login_at',
+        'deactivated_at',
+        'deactivation_reason',
     ];
 
     /**
@@ -58,6 +61,8 @@ class User extends Authenticatable implements MustVerifyEmail
             'password' => 'hashed',
             'is_platform_admin' => 'boolean',
             'last_admin_login_at' => 'datetime',
+            'last_login_at' => 'datetime',
+            'deactivated_at' => 'datetime',
         ];
     }
 

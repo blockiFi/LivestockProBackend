@@ -46,6 +46,8 @@ class AdminNotificationController extends ApiController
 
         $this->logAdminAction($request, 'notification.broadcast', null, null, null, [
             'title' => $validated['title'],
+            'body' => $validated['body'],
+            'farm_ids' => $validated['farm_ids'] ?? [],
             'recipients' => $count,
             'batch_key' => $batchKey,
         ]);
@@ -53,13 +55,39 @@ class AdminNotificationController extends ApiController
         return $this->sendResponse(['recipients' => $count], 'Broadcast sent');
     }
 
+    /** Past broadcasts, read from the audit log entries each send writes. */
+    public function history(Request $request): JsonResponse
+    {
+        $page = \App\Models\AdminAuditLog::with('adminUser:id,name,email')
+            ->where('action', 'notification.broadcast')
+            ->orderByDesc('created_at')
+            ->paginate(min(50, max(5, $request->integer('per_page', 20))));
+
+        return $this->sendResponse($page, 'Broadcast history retrieved');
+    }
+
+    public function invitations(Farm $farm): JsonResponse
+    {
+        return $this->sendResponse(
+            FarmUserInvitation::where('farm_id', $farm->id)->latest()->limit(100)->get(),
+            'Invitations retrieved'
+        );
+    }
+
+    /** Gives a pending invitation another 7 days, as the farm app's resend does. */
     public function resendInvitation(Request $request, Farm $farm, int $invitation): JsonResponse
     {
         $invite = FarmUserInvitation::where('farm_id', $farm->id)->findOrFail($invitation);
 
-        // Reuse existing invite logic if available; for now mark as resent
-        $this->logAdminAction($request, 'farm.invitation.resend', 'farm_user_invitation', $invite->id);
+        if ($invite->status !== 'pending') {
+            return $this->sendError('Only pending invitations can be resent', [], 422);
+        }
 
-        return $this->sendResponse($invite, 'Invitation resend queued');
+        $invite->expires_at = now()->addDays(7);
+        $invite->save();
+
+        $this->logAdminAction($request, 'farm.invitation.resend', 'farm', $farm->id, null, ['invitation_id' => $invite->id, 'email' => $invite->email]);
+
+        return $this->sendResponse($invite, 'Invitation extended for 7 days');
     }
 }

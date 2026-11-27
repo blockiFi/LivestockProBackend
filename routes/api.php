@@ -81,8 +81,8 @@ use App\Http\Controllers\Api\EquipmentLifecycleController;
 Route::post('webhooks/paystack', [PaystackWebhookController::class, 'handle']);
 
 Route::post('register', [AuthController::class, 'register']);
-Route::post('login', [AuthController::class, 'login']);
-Route::post('forgot-password', [AuthController::class, 'forgotPassword']);
+Route::post('login', [AuthController::class, 'login'])->middleware('throttle:login');
+Route::post('forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:login');
 Route::post('reset-password', [AuthController::class, 'resetPassword']);
 
 Route::middleware('auth:sanctum')->group(function () {

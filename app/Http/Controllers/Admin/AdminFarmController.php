@@ -12,6 +12,9 @@ use App\Traits\LogsAdminAction;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Support\CsvExport;
+use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdminFarmController extends ApiController
 {
@@ -28,6 +31,45 @@ class AdminFarmController extends ApiController
     public function index(Request $request): JsonResponse
     {
         return $this->sendResponse($this->farmService->list($request), 'Farms retrieved');
+    }
+
+    public function export(Request $request): StreamedResponse
+    {
+        $this->logAdminAction($request, 'farm.export', 'farm', null, null, $request->only(['search', 'status', 'subscription_status', 'plan_slug']));
+
+        return CsvExport::stream($this->farmService->query($request), [
+            'ID' => fn (Farm $f) => $f->id,
+            'Name' => fn (Farm $f) => $f->name,
+            'Owner' => fn (Farm $f) => $f->owner?->name,
+            'Owner email' => fn (Farm $f) => $f->owner?->email,
+            'Farm email' => fn (Farm $f) => $f->email,
+            'Phone' => fn (Farm $f) => $f->phone,
+            'Country' => fn (Farm $f) => $f->country?->name,
+            'Status' => fn (Farm $f) => $f->deleted_at ? 'Deleted' : ($f->status ? 'Active' : 'Suspended'),
+            'Plan' => fn (Farm $f) => $f->subscription?->plan?->name,
+            'Subscription' => fn (Farm $f) => $f->subscription?->status,
+            'Users' => fn (Farm $f) => $f->users_count,
+            'Flocks' => fn (Farm $f) => $f->flocks_count,
+            'Houses' => fn (Farm $f) => $f->poultry_houses_count,
+            'Created' => fn (Farm $f) => $f->created_at,
+        ], 'farms-' . now()->format('Y-m-d') . '.csv');
+    }
+
+    public function bulk(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'action' => ['required', Rule::in(['suspend', 'activate'])],
+            'ids' => 'required|array|min:1|max:200',
+            'ids.*' => 'integer|exists:farms,id',
+        ]);
+
+        $status = $validated['action'] === 'activate';
+        $ids = Farm::whereIn('id', $validated['ids'])->where('status', '!=', $status)->pluck('id')->all();
+        Farm::whereIn('id', $ids)->update(['status' => $status]);
+
+        $this->logAdminAction($request, "farm.bulk.{$validated['action']}", 'farm', null, null, ['ids' => $ids]);
+
+        return $this->sendResponse(['updated' => count($ids), 'ids' => $ids], $status ? 'Farms activated' : 'Farms suspended');
     }
 
     public function show(Farm $farm): JsonResponse

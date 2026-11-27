@@ -4,17 +4,29 @@ namespace App\Services\Admin;
 
 use App\Models\AdminAuditLog;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 
 class AdminAuditService
 {
-    public function list(Request $request): LengthAwarePaginator
+    public function query(Request $request): Builder
     {
         $query = AdminAuditLog::with('adminUser:id,name,email')
-            ->orderByDesc('created_at');
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
 
         if ($request->filled('action')) {
-            $query->where('action', $request->action);
+            // "farm.*" style prefixes match a whole family of actions.
+            str_ends_with($request->action, '.*')
+                ? $query->where('action', 'like', substr($request->action, 0, -1) . '%')
+                : $query->where('action', $request->action);
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(fn ($q) => $q->where('action', 'like', "%{$search}%")
+                ->orWhere('ip_address', 'like', "%{$search}%")
+                ->orWhereHas('adminUser', fn ($u) => $u->where('email', 'like', "%{$search}%")->orWhere('name', 'like', "%{$search}%")));
         }
 
         if ($request->filled('resource_type')) {
@@ -37,7 +49,23 @@ class AdminAuditService
             $query->whereDate('created_at', '<=', $request->to);
         }
 
-        return $query->paginate($request->integer('per_page', 25));
+        return $query;
+    }
+
+    public function list(Request $request): LengthAwarePaginator
+    {
+        return $this->query($request)->paginate(min(100, max(5, $request->integer('per_page', 25))));
+    }
+
+    /** Values for the audit log filter menus. */
+    public function facets(): array
+    {
+        return [
+            'actions' => AdminAuditLog::query()->distinct()->orderBy('action')->pluck('action'),
+            'resource_types' => AdminAuditLog::query()->whereNotNull('resource_type')->distinct()->orderBy('resource_type')->pluck('resource_type'),
+            'admins' => \App\Models\User::whereIn('id', AdminAuditLog::query()->select('admin_user_id')->distinct())
+                ->orderBy('name')->get(['id', 'name', 'email']),
+        ];
     }
 
     public function forFarm(int $farmId, int $perPage = 25): LengthAwarePaginator
