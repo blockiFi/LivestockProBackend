@@ -8,6 +8,7 @@ use App\Models\SubscriptionTransaction;
 use App\Services\FarmEntitlementService;
 use App\Services\FarmSubscriptionService;
 use App\Services\PaystackService;
+use App\Support\BillingCycle;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -40,6 +41,7 @@ class FarmSubscriptionController extends ApiController
                 'max_users' => $plan->max_users,
                 'max_active_flocks' => $plan->max_active_flocks,
                 'ai_enabled' => $plan->ai_enabled,
+                'billing_cycles' => BillingCycle::optionsFor($plan),
             ]);
 
         return $this->sendResponse($plans, 'Subscription plans retrieved successfully');
@@ -72,7 +74,8 @@ class FarmSubscriptionController extends ApiController
     }
 
     /**
-     * Begin a Paystack checkout for the requested plan.
+     * Begin a Paystack checkout for the requested plan and billing cycle
+     * (monthly, every 6 months, or yearly).
      */
     public function checkout(Request $request, Farm $farm): JsonResponse
     {
@@ -82,6 +85,7 @@ class FarmSubscriptionController extends ApiController
 
         $validator = Validator::make($request->all(), [
             'plan_slug' => 'required|string|exists:subscription_plans,slug',
+            'billing_cycle' => 'nullable|string|in:'.implode(',', BillingCycle::ALL),
         ]);
 
         if ($validator->fails()) {
@@ -94,6 +98,8 @@ class FarmSubscriptionController extends ApiController
             return $this->sendError('That plan is not available', [], 422);
         }
 
+        $cycle = BillingCycle::normalize($request->input('billing_cycle'));
+
         if ($blockers = $this->subscriptions->downgradeBlockers($farm, $plan)) {
             return $this->sendError('This farm exceeds the limits of that plan', $blockers, 422);
         }
@@ -102,7 +108,7 @@ class FarmSubscriptionController extends ApiController
             return $this->sendError('Online payment is not configured. Please contact support to activate this plan.', [], 503);
         }
 
-        $checkout = $this->paystack->initializeSubscription($farm, $plan, $request->user());
+        $checkout = $this->paystack->initializeSubscription($farm, $plan, $request->user(), $cycle);
 
         if ($checkout === null) {
             return $this->sendError('Could not start checkout with the payment provider. Please try again.', [], 502);
@@ -113,18 +119,20 @@ class FarmSubscriptionController extends ApiController
             plan: $plan,
             source: SubscriptionTransaction::SOURCE_CHECKOUT,
             event: 'checkout.initialized',
-            payload: ['plan_slug' => $plan->slug],
+            payload: ['plan_slug' => $plan->slug, 'billing_cycle' => $cycle],
             actor: $request->user(),
-            amountKobo: $plan->price_kobo,
+            amountKobo: $checkout['amount_kobo'],
             reference: $checkout['reference'] ?: null,
             status: 'pending',
+            billingCycle: $cycle,
         );
 
         return $this->sendResponse($checkout, 'Checkout session created successfully');
     }
 
     /**
-     * Move an already-paying farm between plans.
+     * Move an already-paying farm between plans on its current billing cycle.
+     * Changing the cycle itself is a new payment, so it goes through checkout.
      */
     public function changePlan(Request $request, Farm $farm): JsonResponse
     {
@@ -152,6 +160,15 @@ class FarmSubscriptionController extends ApiController
 
         $subscription = $this->entitlements->subscription($farm);
         $currentPlan = $this->entitlements->plan($farm);
+
+        $requestedCycle = $request->input('billing_cycle');
+        if ($requestedCycle !== null && $requestedCycle !== $subscription->billing_cycle && ! $subscription->isWaived()) {
+            return $this->sendError(
+                'Start a checkout to change how often this farm pays.',
+                ['code' => 'checkout_required'],
+                422
+            );
+        }
 
         // A farm without a paid period has nothing to switch — send it to checkout.
         if ($plan->price_kobo > $currentPlan->price_kobo && ! $subscription->hasPaystackSubscription() && ! $subscription->isWaived()) {

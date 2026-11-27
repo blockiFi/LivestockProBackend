@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\FarmEntitlementService;
 use App\Services\FarmSubscriptionService;
 use App\Services\PaystackService;
+use App\Support\BillingCycle;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -203,20 +204,36 @@ class AdminSubscriptionService
             ->groupBy('status')
             ->pluck('total', 'status');
 
-        $byPlan = FarmSubscription::join('subscription_plans', 'subscription_plans.id', '=', 'farm_subscriptions.subscription_plan_id')
+        // One row per plan, status and cycle; MRR spreads 6-month and yearly
+        // payments over their months.
+        $rows = FarmSubscription::join('subscription_plans', 'subscription_plans.id', '=', 'farm_subscriptions.subscription_plan_id')
             ->whereIn('farm_subscriptions.status', [FarmSubscription::STATUS_ACTIVE, FarmSubscription::STATUS_WAIVED])
-            ->selectRaw('subscription_plans.slug, subscription_plans.name, count(*) as total, sum(subscription_plans.price_kobo) as mrr_kobo')
-            ->groupBy('subscription_plans.slug', 'subscription_plans.name')
+            ->selectRaw('subscription_plans.slug, subscription_plans.name, subscription_plans.price_kobo, farm_subscriptions.status, farm_subscriptions.billing_cycle, count(*) as total')
+            ->groupBy('subscription_plans.slug', 'subscription_plans.name', 'subscription_plans.price_kobo', 'farm_subscriptions.status', 'farm_subscriptions.billing_cycle')
             ->get();
 
-        // Waived farms contribute no revenue, so they are excluded from MRR.
-        $mrrKobo = FarmSubscription::join('subscription_plans', 'subscription_plans.id', '=', 'farm_subscriptions.subscription_plan_id')
-            ->where('farm_subscriptions.status', FarmSubscription::STATUS_ACTIVE)
-            ->sum('subscription_plans.price_kobo');
+        $byPlan = $rows->groupBy('slug')->map(fn ($group) => [
+            'slug' => $group->first()->slug,
+            'name' => $group->first()->name,
+            'total' => (int) $group->sum('total'),
+            // Waived farms contribute no revenue, so they are excluded from MRR.
+            'mrr_kobo' => (int) round($group->where('status', FarmSubscription::STATUS_ACTIVE)
+                ->sum(fn ($r) => $r->total * BillingCycle::monthlyEquivalentKobo((int) $r->price_kobo, $r->billing_cycle))),
+        ])->values();
+
+        $mrrKobo = $byPlan->sum('mrr_kobo');
+
+        $byCycle = collect(BillingCycle::ALL)->map(fn (string $cycle) => [
+            'cycle' => $cycle,
+            'label' => BillingCycle::label($cycle),
+            'active' => (int) $rows->where('status', FarmSubscription::STATUS_ACTIVE)
+                ->filter(fn ($r) => BillingCycle::normalize($r->billing_cycle) === $cycle)->sum('total'),
+        ])->values();
 
         return [
             'by_status' => $byStatus,
             'by_plan' => $byPlan,
+            'by_cycle' => $byCycle,
             'mrr' => $mrrKobo / 100,
             'active' => (int) ($byStatus[FarmSubscription::STATUS_ACTIVE] ?? 0),
             'trialing' => (int) ($byStatus[FarmSubscription::STATUS_TRIALING] ?? 0),

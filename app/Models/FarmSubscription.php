@@ -26,9 +26,14 @@ class FarmSubscription extends Model
         self::STATUS_GRACE,
     ];
 
+    protected $attributes = [
+        'billing_cycle' => 'monthly',
+    ];
+
     protected $fillable = [
         'farm_id',
         'subscription_plan_id',
+        'billing_cycle',
         'status',
         'trial_ends_at',
         'current_period_start',

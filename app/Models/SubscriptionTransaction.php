@@ -15,6 +15,7 @@ class SubscriptionTransaction extends Model
     protected $fillable = [
         'farm_id',
         'subscription_plan_id',
+        'billing_cycle',
         'source',
         'event',
         'amount_kobo',

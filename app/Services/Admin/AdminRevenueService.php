@@ -5,6 +5,7 @@ namespace App\Services\Admin;
 use App\Models\FarmSubscription;
 use App\Models\SubscriptionPlan;
 use App\Models\SubscriptionTransaction;
+use App\Support\BillingCycle;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -22,6 +23,9 @@ class AdminRevenueService
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
+        }
+        if ($request->filled('billing_cycle') && BillingCycle::isValid($request->billing_cycle)) {
+            $query->where('billing_cycle', $request->billing_cycle);
         }
         if ($request->filled('plan_slug')) {
             $query->whereHas('plan', fn ($q) => $q->where('slug', $request->plan_slug));
@@ -47,7 +51,12 @@ class AdminRevenueService
 
     public function subscriptions(Request $request): LengthAwarePaginator
     {
-        return $this->subscriptionsQuery($request)->paginate(min(100, max(5, $request->integer('per_page', 25))));
+        return $this->subscriptionsQuery($request)
+            ->paginate(min(100, max(5, $request->integer('per_page', 25))))
+            ->through(fn (FarmSubscription $s) => $s->setAttribute(
+                'billing_amount_kobo',
+                $s->plan ? BillingCycle::priceKobo($s->plan, BillingCycle::normalize($s->billing_cycle)) : null
+            ));
     }
 
     /**
@@ -89,12 +98,15 @@ class AdminRevenueService
         }
 
         $plans = SubscriptionPlan::orderBy('sort_order')->get(['id', 'slug', 'name', 'price_kobo', 'currency']);
-        $counts = FarmSubscription::selectRaw('subscription_plan_id, status, count(*) as c')
-            ->groupBy('subscription_plan_id', 'status')->get();
+        $counts = FarmSubscription::selectRaw('subscription_plan_id, status, billing_cycle, count(*) as c')
+            ->groupBy('subscription_plan_id', 'status', 'billing_cycle')->get();
 
         $planMix = $plans->map(function (SubscriptionPlan $plan) use ($counts) {
             $rows = $counts->where('subscription_plan_id', $plan->id);
-            $paying = (int) $rows->where('status', FarmSubscription::STATUS_ACTIVE)->sum('c');
+            $payingRows = $rows->where('status', FarmSubscription::STATUS_ACTIVE);
+            $paying = (int) $payingRows->sum('c');
+            $cyclePaying = fn (string $cycle) => (int) $payingRows
+                ->filter(fn ($r) => BillingCycle::normalize($r->billing_cycle) === $cycle)->sum('c');
 
             return [
                 'slug' => $plan->slug,
@@ -105,14 +117,15 @@ class AdminRevenueService
                 'trialing' => (int) $rows->where('status', FarmSubscription::STATUS_TRIALING)->sum('c'),
                 'waived' => (int) $rows->where('status', FarmSubscription::STATUS_WAIVED)->sum('c'),
                 'other' => (int) $rows->whereNotIn('status', [FarmSubscription::STATUS_ACTIVE, FarmSubscription::STATUS_TRIALING, FarmSubscription::STATUS_WAIVED])->sum('c'),
-                'mrr' => $paying * $plan->price_kobo / 100,
+                'paying_by_cycle' => collect(BillingCycle::ALL)->mapWithKeys(fn ($c) => [$c => $cyclePaying($c)]),
+                'mrr' => round($payingRows->sum(fn ($r) => $r->c * BillingCycle::monthlyEquivalentKobo((int) $plan->price_kobo, $r->billing_cycle)) / 100, 2),
             ];
         })->values();
 
         $recent = SubscriptionTransaction::with(['farm' => fn ($q) => $q->withTrashed()->select('id', 'name'), 'plan:id,name', 'performer:id,name'])
             ->latest()
             ->limit(15)
-            ->get(['id', 'farm_id', 'subscription_plan_id', 'source', 'event', 'amount_kobo', 'currency', 'status', 'reference', 'performed_by', 'created_at']);
+            ->get(['id', 'farm_id', 'subscription_plan_id', 'billing_cycle', 'source', 'event', 'amount_kobo', 'currency', 'status', 'reference', 'performed_by', 'created_at']);
 
         return [
             'kpis' => app(AdminSubscriptionService::class)->kpis(),

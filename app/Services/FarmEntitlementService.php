@@ -7,6 +7,7 @@ use App\Models\FarmSubscription;
 use App\Models\FarmUserInvitation;
 use App\Models\Flock;
 use App\Models\SubscriptionPlan;
+use App\Support\BillingCycle;
 
 /**
  * Resolves what a farm is allowed to do based on its subscription.
@@ -242,6 +243,10 @@ class FarmEntitlementService
                 'max_active_flocks' => $plan->max_active_flocks,
                 'ai_enabled' => $plan->ai_enabled,
             ],
+            'billing_cycle' => $subscription->billing_cycle ?? BillingCycle::MONTHLY,
+            'billing_cycle_label' => BillingCycle::label(BillingCycle::normalize($subscription->billing_cycle)),
+            'billing_amount' => BillingCycle::priceKobo($plan, BillingCycle::normalize($subscription->billing_cycle)) / 100,
+            'billing_amount_kobo' => BillingCycle::priceKobo($plan, BillingCycle::normalize($subscription->billing_cycle)),
             'status' => $status,
             'is_read_only' => ! in_array($status, FarmSubscription::ENTITLED_STATUSES, true),
             'ai_enabled' => $this->canUseAi($farm),

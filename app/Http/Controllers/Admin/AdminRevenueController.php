@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Api\ApiController;
 use App\Models\FarmSubscription;
 use App\Services\Admin\AdminRevenueService;
+use App\Support\BillingCycle;
 use App\Support\CsvExport;
 use App\Traits\LogsAdminAction;
 use Illuminate\Http\JsonResponse;
@@ -31,14 +32,16 @@ class AdminRevenueController extends ApiController
 
     public function export(Request $request): StreamedResponse
     {
-        $this->logAdminAction($request, 'subscription.export', 'subscription', null, null, $request->only(['status', 'plan_slug', 'ending']));
+        $this->logAdminAction($request, 'subscription.export', 'subscription', null, null, $request->only(['status', 'plan_slug', 'billing_cycle', 'ending']));
 
         return CsvExport::stream($this->revenue->subscriptionsQuery($request), [
             'Farm ID' => fn (FarmSubscription $s) => $s->farm_id,
             'Farm' => fn (FarmSubscription $s) => $s->farm?->name,
             'Owner email' => fn (FarmSubscription $s) => $s->farm?->owner?->email,
             'Plan' => fn (FarmSubscription $s) => $s->plan?->name,
-            'Price' => fn (FarmSubscription $s) => $s->plan ? $s->plan->price_kobo / 100 : '',
+            'Billing' => fn (FarmSubscription $s) => BillingCycle::label(BillingCycle::normalize($s->billing_cycle)),
+            'Monthly price' => fn (FarmSubscription $s) => $s->plan ? $s->plan->price_kobo / 100 : '',
+            'Amount per payment' => fn (FarmSubscription $s) => $s->plan ? BillingCycle::priceKobo($s->plan, BillingCycle::normalize($s->billing_cycle)) / 100 : '',
             'Status' => fn (FarmSubscription $s) => $s->status,
             'Trial ends' => fn (FarmSubscription $s) => $s->trial_ends_at,
             'Period ends' => fn (FarmSubscription $s) => $s->current_period_end,

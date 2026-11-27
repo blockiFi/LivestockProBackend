@@ -79,8 +79,12 @@ class FarmSubscriptionService
         SubscriptionPlan $plan,
         CarbonInterface $periodStart,
         CarbonInterface $periodEnd,
+        ?string $billingCycle = null,
     ): FarmSubscription {
         $subscription->subscription_plan_id = $plan->id;
+        if ($billingCycle !== null) {
+            $subscription->billing_cycle = $billingCycle;
+        }
         $subscription->current_period_start = $periodStart;
         $subscription->current_period_end = $periodEnd;
         $subscription->grace_ends_at = null;
@@ -144,10 +148,12 @@ class FarmSubscriptionService
         ?int $amountKobo = null,
         ?string $reference = null,
         ?string $status = null,
+        ?string $billingCycle = null,
     ): SubscriptionTransaction {
         return SubscriptionTransaction::create([
             'farm_id' => $farm->id,
             'subscription_plan_id' => $plan?->id,
+            'billing_cycle' => $billingCycle,
             'source' => $source,
             'event' => $event,
             'amount_kobo' => $amountKobo,
